@@ -1,0 +1,19 @@
+[project]
+name = "seqhesion"
+version = "0.1.0"
+description = "A label-blind hierarchy of sequence groups, built from many small overlapping trees"
+requires-python = ">=3.10"
+dependencies = ["numpy", "scipy", "ete3"]
+
+[project.optional-dependencies]
+test = ["pytest"]
+
+[project.scripts]
+seqhesion = "seqhesion.__main__:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["seqhesion"]
