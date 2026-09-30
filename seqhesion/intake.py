@@ -19,6 +19,8 @@ Tips: tip_id = the first 16 hex digits of sha256 of the extracted, oriented full
                      its2   LSU anchor, ITS2 >= 100, but ITS1 < 50 or 5.8S < 140
                      other  end-truncated, ITS1-only, undetected
                      chimeric
+                     unreadable  characters outside IUPAC (or empty)
+  after extraction:  overlong (extracted full ITS > 3,000 bp), not_extracted (pyitsx gave nothing)
   extract          full_ITS span of the full class (pyitsx extract orients 5'->3')
   derep            exact dereplication of the extracted sequences; every input id kept
 
@@ -40,6 +42,7 @@ UNANCHORED_MIN = 150                        # ITS1 (no SSU) or ITS2 (no LSU) mus
 IUPAC = set('ACGTRYSWKMBDHVN')
 COMP = str.maketrans('ACGTRYSWKMBDHVN', 'TGCAYRSWMKVHDBN')
 TIP_HEX = 16
+MAX_ITS = 3000        # real full ITS tops out near 2,500 bp (Cantharellus); longer is not one ITS
 
 
 def clean(seq):
@@ -131,19 +134,12 @@ def run(inputs, outdir, cpus=6, log=print):
         os.replace(delim + '.tmp', delim)
     rows = list(csv.DictReader(open(delim), delimiter='\t'))
     cls = {r['seq_id']: classify(r) for r in rows}
-    counts = Counter(cls.values())
-    counts['unreadable'] = len(unreadable)
-    counts['full_unanchored'] = sum(1 for r in rows if cls[r['seq_id']] == 'full' and anchors(r) != 'SSU+LSU')
     rows += [{'seq_id': n, 'strand': '', 'chimeric': '', **{k: '' for k in ('SSU', 'ITS1', '5.8S', 'ITS2', 'LSU')}} for n in unreadable]
     cls.update({n: 'unreadable' for n in unreadable})
-    counts['undetected_by_delimit'] = sum(1 for r in rows if not any(r[k] not in ('', '-', 'None') for k in ('SSU', 'ITS1', '5.8S', 'ITS2', 'LSU')))
-    counts['reverse_strand'] = sum(1 for r in rows if r['strand'] == '-')
-    with open(os.path.join(outdir, 'classes.tsv'), 'w') as fh:
-        fh.write('seq_id\tclass\tstrand\tanchors\tSSU\tITS1\t5.8S\tITS2\tLSU\n')
-        for r in rows:
-            fh.write('\t'.join([r['seq_id'], cls[r['seq_id']], r['strand'], anchors(r) if cls[r['seq_id']] != 'unreadable' else '']
-                               + [str(span(r[k])) for k in ('SSU', 'ITS1', '5.8S', 'ITS2', 'LSU')]) + '\n')
-    log(f'classes: {dict(counts)}')
+    missing = [n for n, _ in rows_in if n not in cls]         # readable, but no delimit row at all
+    rows += [{'seq_id': n, 'strand': '', 'chimeric': '', **{k: '' for k in ('SSU', 'ITS1', '5.8S', 'ITS2', 'LSU')}} for n in missing]
+    cls.update({n: 'other' for n in missing})
+    assert len(cls) == len(rows_in) == len(rows), 'every input gets exactly one class'
 
     full_in = os.path.join(outdir, 'full_input.fasta')
     with open(full_in, 'w') as fh:
@@ -156,8 +152,22 @@ def run(inputs, outdir, cpus=6, log=print):
         os.replace(ext + '.tmp', ext)
 
     groups = defaultdict(list)
+    extracted = set()
     for name, seq in read_fasta(ext):
-        groups[seq.upper()].append(name.split('|')[0])
+        name = name.split('|')[0]
+        extracted.add(name)
+        if len(seq) > MAX_ITS:                 # e.g. a pasted contig that happens to contain an ITS
+            cls[name] = 'overlong'
+            continue
+        groups[seq.upper()].append(name)
+    for name, c in cls.items():
+        if c == 'full' and name not in extracted:
+            cls[name] = 'not_extracted'
+    counts = Counter(cls.values())
+    counts['full_unanchored'] = sum(1 for r in rows if cls[r['seq_id']] == 'full' and anchors(r) != 'SSU+LSU')
+    counts['undetected_by_delimit'] = sum(1 for r in rows if not any(r[k] not in ('', '-', 'None') for k in ('SSU', 'ITS1', '5.8S', 'ITS2', 'LSU')))
+    counts['reverse_strand'] = sum(1 for r in rows if r['strand'] == '-')
+    log(f'classes: {dict(counts)}')
     tips = {}
     for seq in groups:
         t = tip_id(seq)
@@ -171,6 +181,13 @@ def run(inputs, outdir, cpus=6, log=print):
             t = tip_id(seq)
             fh.write(f'>{t}\n{seq}\n')
             mh.write(f'{t}\t{len(names)}\t{",".join(sorted(names))}\n')
+    tip_of = {n: tip_id(seq) for seq, names in groups.items() for n in names}
+    with open(os.path.join(outdir, 'classes.tsv'), 'w') as fh:
+        fh.write('seq_id\tclass\ttip\tstrand\tanchors\tSSU\tITS1\t5.8S\tITS2\tLSU\n')
+        for r in rows:
+            n = r['seq_id']
+            fh.write('\t'.join([n, cls[n], tip_of.get(n, ''), r['strand'], anchors(r) if cls[n] != 'unreadable' else '']
+                               + [str(span(r[k])) for k in ('SSU', 'ITS1', '5.8S', 'ITS2', 'LSU')]) + '\n')
     summary = {'input': len(rows), 'classes': dict(counts), 'extracted': sum(len(v) for v in groups.values()),
                'unique': len(groups), 'singletons': sum(len(v) == 1 for v in groups.values()),
                'largest_identical_group': max((len(v) for v in groups.values()), default=0)}
