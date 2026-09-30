@@ -51,8 +51,7 @@ Moved out of the *ubertree* research prototype on 2026-09-30, where the method w
 and validated (simulation, cross-cover reproducibility, the stitch it replaced). The history and
 the experiments stay there. Reproduces that prototype's hierarchies byte for byte.
 
-Next: an export for downstream consumers (TSV tables and a JSON manifest), sequence ids that
-are content hashes (intake still numbers unique sequences by abundance), release-to-release
+Next: an export for downstream consumers (TSV tables and a JSON manifest), release-to-release
 stable group ids, a compute plan for the full corpus.
 
 ## License
