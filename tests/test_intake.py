@@ -17,3 +17,30 @@ def test_completeness_rule():
     assert intake.classify(row(LSU='-', ITS2='453-580')) == 'other'                  # no LSU, ITS2 128
     assert intake.classify(row(SSU='', LSU='')) == 'full' and intake.anchors(row(SSU='', LSU='')) == 'none'
     assert intake.anchors(row()) == 'SSU+LSU' and intake.anchors(row(LSU='')) == 'SSU'
+
+
+def test_content_id_is_orientation_free_and_iupac_aware():
+    s = 'ACGTRYSWKMBDHVN'
+    rc = s.translate(intake.COMP)[::-1]
+    assert rc == 'NBDHVKMWSRYACGT'
+    assert intake.content_id(s) == intake.content_id(rc)
+    assert intake.content_id(intake.clean(' acg-t.\nRY ')) == intake.content_id('ACGTRY')
+
+
+def test_input_ids_must_be_their_content_hash(tmp_path):
+    import pytest
+    good = intake.content_id('ACGTACGGT')
+    p = tmp_path / 'in.fasta'
+    p.write_text(f'>{good} label="anything at all"\nacgt-acggt\n')
+    assert intake.checked_input(p) == [(good, 'ACGTACGGT')]
+    p.write_text(f'>{good}\nACGTACGGA\n')
+    with pytest.raises(intake.BadInput):
+        intake.checked_input(p)
+    p.write_text(f'>{good}\nACGTACGGT\n>{good}\nACGTACGGT\n')
+    with pytest.raises(intake.BadInput):
+        intake.checked_input(p)
+
+
+def test_tip_id_is_the_extracted_content():
+    assert intake.tip_id('acgt') == intake.tip_id('ACGT') != intake.tip_id('ACGA')
+    assert len(intake.tip_id('ACGT')) == intake.TIP_HEX

@@ -1,4 +1,12 @@
-"""Intake: raw union → full-ITS sequences, oriented and exactly dereplicated.
+"""Intake: input sequences → full-ITS tips, oriented and exactly dereplicated.
+
+Input: a FASTA whose ids are content hashes (the contract with mm-to-ref, 2026-09-30):
+  input_id = min(sha256(s), sha256(revcomp(s))), lowercase hex, where s is the sequence
+  uppercased with whitespace and gap characters ('-', '.') removed, and revcomp is
+  IUPAC-aware. Every id is recomputed here and a mismatch or duplicate refuses the whole
+  input. Anything after the id on a header line is ignored (labels are never read).
+Tips: tip_id = the first 16 hex digits of sha256 of the extracted, oriented full-ITS
+  sequence, so a tip's id is its content (collisions are checked, never assumed away).
 
   pyitsx delimit   region coordinates, strand, chimera flag (our own step, run on raw input)
   classify         our completeness rule, not pyitsx's full_ITS span (ubertree lab, DESIGN.md §3.1):
@@ -18,8 +26,10 @@ Everything dropped is counted in classes.tsv / summary.json; nothing is correcte
 Usage: python -m seqhesion intake INPUT.fasta OUTDIR
 """
 import csv
+import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 from collections import Counter, defaultdict
@@ -28,6 +38,42 @@ PYITSX = os.path.join(os.path.dirname(sys.executable), 'pyitsx')
 RULE = {'ITS1': 50, '5.8S': 140, 'ITS2': 50}
 UNANCHORED_MIN = 150                        # ITS1 (no SSU) or ITS2 (no LSU) must be at least this long
 IUPAC = set('ACGTRYSWKMBDHVN')
+COMP = str.maketrans('ACGTRYSWKMBDHVN', 'TGCAYRSWMKVHDBN')
+TIP_HEX = 16
+
+
+def clean(seq):
+    """mm-to-ref's clean_sequence: uppercase; whitespace and gap characters out; no U->T."""
+    return re.sub(r'[\s\-.]', '', seq).upper()
+
+
+def content_id(seq):
+    """The input id of a cleaned sequence: orientation-free content hash."""
+    return min(hashlib.sha256(seq.encode()).hexdigest(), hashlib.sha256(seq.translate(COMP)[::-1].encode()).hexdigest())
+
+
+def tip_id(extracted):
+    return hashlib.sha256(extracted.upper().encode()).hexdigest()[:TIP_HEX]
+
+
+class BadInput(ValueError):
+    pass
+
+
+def checked_input(path):
+    """[(input_id, cleaned sequence)], refusing ids that are not the content hash, and duplicates."""
+    rows, seen, bad = [], set(), []
+    for name, seq in read_fasta(path):
+        s = clean(seq)
+        if name in seen:
+            bad.append(f'{name}: duplicate id')
+        elif content_id(s) != name:
+            bad.append(f'{name}: not the content hash of its sequence')
+        seen.add(name)
+        rows.append((name, s))
+    if bad:
+        raise BadInput(f'{len(bad)} of {len(rows)} input records refused, e.g. ' + '; '.join(bad[:5]))
+    return rows
 
 
 def span(s):
@@ -67,13 +113,15 @@ def read_fasta(path):
         yield name, ''.join(buf)
 
 
-def run(union, outdir, cpus=6, log=print):
+def run(inputs, outdir, cpus=6, log=print):
     os.makedirs(outdir, exist_ok=True)
+    rows_in = checked_input(inputs)
+    log(f'{len(rows_in)} input sequences; every id is its content hash')
     readable = os.path.join(outdir, 'readable.fasta')
     unreadable = []
     with open(readable, 'w') as fh:                       # pyitsx rejects anything outside IUPAC
-        for name, seq in read_fasta(union):
-            if set(seq) - IUPAC:
+        for name, seq in rows_in:
+            if not seq or set(seq) - IUPAC:
                 unreadable.append(name)
             else:
                 fh.write(f'>{name}\n{seq}\n')
@@ -99,7 +147,7 @@ def run(union, outdir, cpus=6, log=print):
 
     full_in = os.path.join(outdir, 'full_input.fasta')
     with open(full_in, 'w') as fh:
-        for name, seq in read_fasta(union):
+        for name, seq in rows_in:
             if cls.get(name) == 'full':
                 fh.write(f'>{name}\n{seq}\n')
     ext = os.path.join(outdir, 'full.extract.fasta')
@@ -109,13 +157,20 @@ def run(union, outdir, cpus=6, log=print):
 
     groups = defaultdict(list)
     for name, seq in read_fasta(ext):
-        groups[seq].append(name.split('|')[0])
-    reps = sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[1][0]))
+        groups[seq.upper()].append(name.split('|')[0])
+    tips = {}
+    for seq in groups:
+        t = tip_id(seq)
+        if t in tips:
+            raise RuntimeError(f'tip id collision at {TIP_HEX} hex digits: {t}; lengthen TIP_HEX')
+        tips[t] = seq
+    reps = sorted(groups.items(), key=lambda kv: (-len(kv[1]), tip_id(kv[0])))
     with open(os.path.join(outdir, 'full.derep.fasta'), 'w') as fh, open(os.path.join(outdir, 'derep_members.tsv'), 'w') as mh:
         mh.write('unique\tsize\tmembers\n')
-        for k, (seq, names) in enumerate(reps, 1):
-            fh.write(f'>u{k:06d}\n{seq}\n')
-            mh.write(f'u{k:06d}\t{len(names)}\t{",".join(names)}\n')
+        for seq, names in reps:
+            t = tip_id(seq)
+            fh.write(f'>{t}\n{seq}\n')
+            mh.write(f'{t}\t{len(names)}\t{",".join(sorted(names))}\n')
     summary = {'input': len(rows), 'classes': dict(counts), 'extracted': sum(len(v) for v in groups.values()),
                'unique': len(groups), 'singletons': sum(len(v) == 1 for v in groups.values()),
                'largest_identical_group': max((len(v) for v in groups.values()), default=0)}
@@ -127,8 +182,8 @@ def run(union, outdir, cpus=6, log=print):
 if __name__ == '__main__':
     import argparse
     ap = argparse.ArgumentParser()
-    ap.add_argument('union')
+    ap.add_argument('inputs')
     ap.add_argument('outdir')
     ap.add_argument('--cpus', type=int, default=6)
     a = ap.parse_args()
-    run(a.union, a.outdir, a.cpus)
+    run(a.inputs, a.outdir, a.cpus)

@@ -11,8 +11,10 @@ labels come back only as test cases.
 
 ## How it works
 
-1. **Intake.** Orientation and the full-ITS rule (pyitsx), exact dereplication. Nothing is
-   corrected; everything dropped is counted.
+1. **Intake.** Input ids are content hashes (min of sha256 of the cleaned sequence and of its
+   IUPAC reverse complement); each is recomputed and a mismatch refuses the input. Orientation
+   and the full-ITS rule (pyitsx), exact dereplication; a tip's id is a hash of its extracted
+   sequence. Nothing is corrected; everything dropped is counted.
 2. **Regions.** Connected components of a 90%-centroid similarity graph, built independently.
 3. **Covers.** Two independent covers of each region by *shards*: a seed and its nearest
    neighbours (150), topped up so each shard holds at least 30 sequences below 97% identity to
