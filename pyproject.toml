@@ -3,6 +3,7 @@ name = "seqhesion"
 version = "0.1.0"
 description = "A label-blind hierarchy of sequence groups, built from many small overlapping trees"
 requires-python = ">=3.10"
+license = {text = "BSD-3-Clause"}
 dependencies = ["numpy", "scipy", "ete3"]
 
 [project.optional-dependencies]

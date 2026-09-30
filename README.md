@@ -52,3 +52,7 @@ the experiments stay there. Reproduces that prototype's hierarchies byte for byt
 Next: an export for downstream consumers (TSV tables and a JSON manifest), sequence ids that
 are content hashes (intake still numbers unique sequences by abundance), release-to-release
 stable group ids, a compute plan for the full corpus.
+
+## License
+
+BSD 3-Clause; see `LICENSE`.
