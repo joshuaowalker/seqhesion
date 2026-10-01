@@ -35,11 +35,21 @@ labels come back only as test cases.
 
 The shards support structure to about 0.075; coarser levels are relative.
 
+## Releases
+
+`python -m seqhesion release` writes a release: TSV tables and a JSON manifest (schema
+`seqhesion-release/0`, columns documented in `seqhesion/export.py`). Every input is accounted for
+(built, not built, or dropped with its intake class). Each group carries its evidence and its
+min/median pairwise identity. Each group is an **antenomen**: an identity carried from release
+to release when a group and its predecessor are each other's best match and share more than half
+of the inputs both releases hold (`seqhesion/lineage.py`); `lineage.tsv` logs every match.
+
 ## Use
 
     python -m seqhesion intake    INPUT.fasta INTAKE_DIR
     python -m seqhesion regions   INTAKE_DIR REGIONS_DIR
     python -m seqhesion build     REGION_DIR --out hierarchy.json     # cover + prepare + hierarchy
+    python -m seqhesion release   OUT --input INPUT_DIR --intake INTAKE_DIR [--previous PREV] REGION_DIR=hierarchy.json ...
 
 or the steps of `build` one at a time: `cover`, `prepare`, `hierarchy`.
 
@@ -51,8 +61,8 @@ Moved out of the *ubertree* research prototype on 2026-09-30, where the method w
 and validated (simulation, cross-cover reproducibility, the stitch it replaced). The history and
 the experiments stay there. Reproduces that prototype's hierarchies byte for byte.
 
-Next: an export for downstream consumers (TSV tables and a JSON manifest), release-to-release
-stable group ids, a compute plan for the full corpus.
+Next: a compute plan for the full corpus (one component of ~60K sequences at the default
+component cut), and coarser levels.
 
 ## License
 

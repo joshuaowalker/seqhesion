@@ -6,6 +6,7 @@
   python -m seqhesion prepare   COVERS_DIR
   python -m seqhesion hierarchy REGION_DIR [--covers covers] --out hierarchy.json
   python -m seqhesion build     REGION_DIR [--covers covers] --out hierarchy.json   (cover + prepare + hierarchy)
+  python -m seqhesion release   OUT_DIR --input INPUT_DIR --intake INTAKE_DIR REGION_DIR=HIERARCHY.json ...
 """
 import argparse
 import json
@@ -67,6 +68,24 @@ def cmd_build(a):
     cmd_hierarchy(a)
 
 
+def cmd_release(a):
+    from . import export, regions
+    comps = []
+    for spec in a.components:
+        rd, hj = spec.split('=', 1)
+        comps.append((rd, json.load(open(hj))))
+    export.write_release(a.out, a.input, a.intake, comps, regions.components(a.intake, a.min_id), a.procs, log=_log,
+                         settings={'component_min_id': a.min_id}, previous=a.previous)
+    if a.latest:
+        link = Path(a.out).parent / 'latest'
+        tmp = Path(a.out).parent / '.latest.tmp'
+        if tmp.is_symlink():
+            tmp.unlink()
+        tmp.symlink_to(Path(a.out).name)
+        tmp.replace(link)
+        _log(f'latest -> {Path(a.out).name}')
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog='seqhesion', description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest='cmd', required=True)
@@ -80,7 +99,7 @@ def main(argv=None):
         return p
 
     add('intake', cmd_intake, 'input', 'outdir')
-    p = add('regions', cmd_regions, 'intake', 'out')
+    p = add('regions', cmd_regions, 'intake', 'out')  # --min-id: identity (%) linking 90% centroids
     p.add_argument('--min-id', type=float, default=80.0)
 
     def cover_args(p):
@@ -109,6 +128,13 @@ def main(argv=None):
     p.add_argument('--out', required=True)
     cover_args(p)
     hier_args(p)
+    p = add('release', cmd_release, 'out')
+    p.add_argument('--input', required=True, help='the input directory (its manifest.json is recorded)')
+    p.add_argument('--intake', required=True)
+    p.add_argument('components', nargs='+', help='REGION_DIR=HIERARCHY.json')
+    p.add_argument('--min-id', type=float, default=80.0, help='the centroid identity components were cut at')
+    p.add_argument('--previous', help='the previous release directory, whose group ids (antenomina) are carried forward')
+    p.add_argument('--latest', action='store_true', help="point <releases>/latest at this release")
     a = ap.parse_args(argv)
     a.fn(a)
 
