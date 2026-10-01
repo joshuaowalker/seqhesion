@@ -77,3 +77,66 @@ def place(hits, levels, group_at):
     outside = [i for i, ids in hits for r in ids if group is None and r not in top or group is not None and group_at[level].get(r) != group]
     margin = best - max(outside) if outside else None
     return best, sorted(top), level, group, margin
+
+
+PLACE_COLUMNS = ['input_id', 'status', 'component', 'group_id', 'level', 'identity', 'margin', 'n_closest', 'closest']
+MAX_LISTED = 20
+
+
+def cached_its2(seqs, path, cpus=8):
+    """extract_its2 with its result kept at `path` (a FASTA) beside the intake; reused only if it
+    covers exactly the requested ids (ids are content hashes, so same id = same sequence)."""
+    path = Path(path)
+    if path.exists():
+        have = read_fasta(path)
+        done = set(read_fasta(f'{path}.ids')) if Path(f'{path}.ids').exists() else set()
+        if done == set(seqs):
+            return have
+    got = extract_its2(seqs, cpus)
+    write_fasta(f'{path}.tmp', got, sorted(got))
+    write_fasta(f'{path}.ids.tmp', {i: 'N' for i in seqs}, sorted(seqs))
+    os.replace(f'{path}.tmp', path)
+    os.replace(f'{path}.ids.tmp', f'{path}.ids')
+    return got
+
+
+def place_inputs(intake_dir, classes, built_group_at, levels, comp_of, threads=8, log=print):
+    """Rows of placements.tsv for every ITS2-only input. Queries are compared with the ITS2 of ALL
+    tips of the intake, so that one whose relatives lie in a component this release did not build
+    is reported as such instead of being placed beside a distant built tip.
+    built_group_at[level][tip] -> group id (None: in no group) for tips of built components."""
+    intake_dir = Path(intake_dir)
+    tips = read_fasta(intake_dir / 'full.derep.fasta')
+    raw = read_fasta(intake_dir / 'readable.fasta')
+    queries = {r['seq_id']: raw[r['seq_id']] for r in classes if r['class'] == 'its2'}
+    tip_its2 = cached_its2(tips, intake_dir / 'tips.its2.fasta', threads)
+    q_its2 = cached_its2(queries, intake_dir / 'its2_inputs.its2.fasta', threads)
+    hits = closest(q_its2, tip_its2, threads)
+    built = set().union(*(set(g) for g in built_group_at.values())) if built_group_at else set()
+    rows, status = [], collections.Counter()
+    for q in sorted(queries):
+        row = dict.fromkeys(PLACE_COLUMNS)
+        row['input_id'] = q
+        if q not in q_its2:
+            row['status'] = 'no_its2'
+        elif q not in hits:
+            row['status'] = 'no_match'
+        else:
+            best = hits[q][0][0]
+            top = sorted({r for i, ids in hits[q] if i == best for r in ids})
+            comps = {comp_of.get(t) for t in top}
+            row.update(identity=round(best, 4), n_closest=len(top), closest=','.join(top[:MAX_LISTED]))
+            if len(comps) > 1:
+                row['status'] = 'spans_components'
+            elif not set(top) <= built:
+                row['status'] = 'not_built'
+                row['component'] = comps.pop()
+            else:
+                row['component'] = comps.pop()
+                own = [(i, [r for r in ids if r in built]) for i, ids in hits[q]]
+                _, _, level, group, margin = place(own, levels, built_group_at)
+                row.update(status='placed', group_id=group, level=level, margin=None if margin is None else round(margin, 4))
+        status[row['status']] += 1
+        rows.append(row)
+    log(f'ITS2-only placements: {dict(status)}')
+    return rows, dict(status)

@@ -19,6 +19,12 @@ Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30). No labels anywhe
   lineage.tsv      event (continued / born / retired), group_id, previous_id, jaccard, shared,
                    new_common, old_common: every group's best match in the previous release and
                    every previous group's best match here, over the inputs both releases hold
+  placements.tsv   every ITS2-only input (intake class its2), placed beside its closest tips, ITS2 to
+                   ITS2 (seqhesion.place): input_id, status (placed / not_built / spans_components /
+                   no_match / no_its2), component, group_id and level (the finest group holding all
+                   its closest tips; empty: the component only), identity, margin (to the best match
+                   outside that group), n_closest, closest (up to 20 tip ids). Placements never
+                   shape the hierarchy; trust one at its own level, not finer.
   minted.tsv       every group id ever minted, with the release that minted it (never reused)
   membership.tsv   tip_id, level, group_id (empty: in no group), membership, votes, partners,
                    pull, pull_target (a group_id, or a tip_id for an ungrouped tip; empty when nothing
@@ -41,7 +47,7 @@ from pathlib import Path
 
 import numpy as np
 
-from . import lineage
+from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
 SCHEMA = 'seqhesion-release/0'
@@ -56,6 +62,7 @@ COLUMNS = {
     'group_members.tsv': ['group_id', 'tip_id'],
     'lineage.tsv': ['event', 'group_id', 'previous_id', 'jaccard', 'shared', 'new_common', 'old_common'],
     'minted.tsv': ['group_id', 'release'],
+    'placements.tsv': place.PLACE_COLUMNS,
     'membership.tsv': ['tip_id', 'level', 'group_id', 'membership', 'votes', 'partners', 'pull', 'pull_target', 'pull_votes'],
 }
 
@@ -151,7 +158,8 @@ def previous_groups(prev):
     return dict(groups), minted
 
 
-def write_release(out, input_dir, intake_dir, components, all_components, threads=8, log=print, settings=None, previous=None):
+def write_release(out, input_dir, intake_dir, components, all_components, threads=8, log=print, settings=None, previous=None,
+                  place_its2=True):
     """components: [(region_dir, hierarchy dict from hierarchy.build or its JSON)] to publish.
     all_components: every component of the intake (lists of tip ids), for inputs.tsv.
     previous: the previous release directory, whose group ids are carried forward."""
@@ -204,7 +212,8 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
     log(f'antenomina: {len(inherit)} carried forward, {len(new) - len(inherit)} new; events {dict(events)}')
 
     out.mkdir(parents=True, exist_ok=False)            # a release is written once
-    tables = {name: Table(out, name) for name in COLUMNS if name not in ('inputs.tsv', 'lineage.tsv', 'minted.tsv')}
+    tables = {name: Table(out, name) for name in COLUMNS if name not in ('inputs.tsv', 'lineage.tsv', 'minted.tsv', 'placements.tsv')}
+    built_group_at = collections.defaultdict(dict)
     tip_seqs, built = {}, set()
     meta = {'levels': None, 'components': []}
     for ci, (region_dir, h, tips, comp, tips_of_node) in enumerate(built_comps):
@@ -237,6 +246,9 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                 second_id=G(node_at[k][sec[2]]) if sec else None, second_distance=sec[0] if sec else None,
                 gap=nd['gap'], clade=v[0], unresolved=v[1], conflict=v[2], whole=v[3])
         for k, lv in enumerate(h['levels']):
+            for i, t in enumerate(tips):
+                gi = lv['group_of'][i]
+                built_group_at[lv['level']][t] = G(node_at[k][gi]) if gi >= 0 else None
             for g in lv['groups']:
                 tables['group_levels.tsv'].row(group_id=G(g['node']), level=lv['level'], cohesion=g['cohesion'], votes=g['votes'],
                                                replication=g['replication'], votes_replicate=g['votes1'], held=g['held'])
@@ -271,6 +283,14 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
         mt.row(group_id=g, release=rel)
     mt.close()
 
+    placed = None
+    if place_its2:
+        prow, placed = place.place_inputs(intake_dir, classes, built_group_at, meta['levels'], comp_of, threads, log)
+        pt = Table(out, 'placements.tsv')
+        for r in prow:
+            pt.row(**r)
+        pt.close()
+
     status = collections.Counter()
     inputs = Table(out, 'inputs.tsv')
     for r in classes:
@@ -293,6 +313,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                   'identity': 'vsearch --allpairs_global --iddef 2, fraction'},
         'group_id': 'antenomen: carried from the previous release on a mutual best match sharing > 1/2 of the inputs both '
                     'releases hold, else newly minted (see lineage.tsv, minted.tsv)',
+        'placements': placed,
         'lineage': {'carried': len(inherit), 'new': len(new) - len(inherit), 'events': dict(events)},
         'components': meta['components'],
         'counts': {'inputs': sum(status.values()), 'status': dict(status), 'tips': len(tip_seqs),
