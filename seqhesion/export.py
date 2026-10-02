@@ -264,6 +264,17 @@ def write_tree_data(out, comp, region_dir, h, tips, covers='covers'):
                 f.write(f'{name}\t{m}\t{col}\t{w}\n')
 
 
+def next_name(releases_dir, kind, now=None):
+    """The next release name: YYYYMMDD.NN plus 'f' (full build) or 'i' (increment), UTC date, NN the
+    release's number that day (Josh, 2026-10-02; provenance lives in the manifest, not the name)."""
+    assert kind in ('f', 'i')
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    day = now.strftime('%Y%m%d')
+    taken = [p.name for p in Path(releases_dir).glob(f'{day}.*')] if Path(releases_dir).exists() else []
+    n = 1 + max((int(t[9:11]) for t in taken if len(t) >= 11 and t[9:11].isdigit()), default=0)
+    return f'{day}.{n:02d}{kind}'
+
+
 def write_release(out, input_dir, intake_dir, components, all_components, threads=8, log=print, settings=None, previous=None,
                   place_its2=True, covers='covers'):
     """components: [(region_dir, hierarchy dict from hierarchy.build or its JSON)] to publish.
@@ -411,6 +422,9 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
     manifest = {
         'schema': SCHEMA,
         'release': release,
+        'kind': 'full',                         # every release so far is a full build; increments come next
+        'base_full_build': release,
+        'increments_since_full': 0,
         'previous_release': str(previous) if previous else None,
         'created': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
         'seqhesion_commit': seqhesion_commit(),

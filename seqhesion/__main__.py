@@ -6,7 +6,7 @@
   python -m seqhesion prepare   COVERS_DIR
   python -m seqhesion hierarchy REGION_DIR [--covers covers] --out hierarchy.json
   python -m seqhesion build     REGION_DIR [--covers covers] --out hierarchy.json   (cover + prepare + hierarchy)
-  python -m seqhesion release   OUT_DIR --input INPUT_DIR --intake INTAKE_DIR REGION_DIR=HIERARCHY.json ...
+  python -m seqhesion release   OUT_DIR|auto [--releases DIR] --input INPUT_DIR --intake INTAKE_DIR REGION_DIR=HIERARCHY.json ...
 """
 import argparse
 import json
@@ -70,6 +70,11 @@ def cmd_build(a):
 
 def cmd_release(a):
     from . import export, regions
+    if a.out == 'auto':
+        if not a.releases:
+            raise SystemExit("OUT_DIR 'auto' needs --releases DIR")
+        a.out = str(Path(a.releases) / export.next_name(a.releases, 'f'))
+        _log(f'release name: {Path(a.out).name}')
     comps = []
     for spec in a.components:
         rd, hj = spec.split('=', 1)
@@ -129,6 +134,7 @@ def main(argv=None):
     cover_args(p)
     hier_args(p)
     p = add('release', cmd_release, 'out')
+    p.add_argument('--releases', help="with OUT_DIR 'auto': the releases directory; the release is named YYYYMMDD.NN + f")
     p.add_argument('--input', required=True, help='the input directory (its manifest.json is recorded)')
     p.add_argument('--intake', required=True)
     p.add_argument('components', nargs='+', help='REGION_DIR=HIERARCHY.json')

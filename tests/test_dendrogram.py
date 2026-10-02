@@ -39,3 +39,13 @@ def test_a_singleton_part_is_its_own_line():
     lk = linkage_of([(0, 1, 0.01)], 3)
     lines, _ = export.dendrogram(lk, tips)
     assert sorted(lines) == sorted(['(a:0.01,b:0.01)m0;', 'z:0;'])
+
+
+def test_release_names_are_dated_and_numbered_per_day(tmp_path):
+    import datetime
+    now = datetime.datetime(2026, 10, 2, 23, 0, tzinfo=datetime.timezone.utc)
+    assert export.next_name(tmp_path, 'f', now) == '20261002.01f'
+    (tmp_path / '20261002.01f').mkdir()
+    (tmp_path / 'v4-2026-10-02_cycle6').mkdir()              # legacy names are ignored
+    assert export.next_name(tmp_path, 'i', now) == '20261002.02i'
+    assert export.next_name(tmp_path / 'missing', 'f', now) == '20261002.01f'
