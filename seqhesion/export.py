@@ -32,6 +32,14 @@ Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30). No labels anywhe
                    pull, pull_target (a group_id, or a tip_id for an ungrouped tip; empty when nothing
                    outside joins it at this level), pull_votes; pull empty: no outside evidence at all
 
+Tree data (schema 0.1, for drawing and on-demand distances; see the release manifest's notes):
+  dendrogram/<component>.nwk          the average-linkage dendrogram the levels are cut from (primary
+                                      cover): one Newick line per forest part, internal nodes m<row>,
+                                      branch lengths = height differences (ultrametric)
+  dendrogram/<component>.merges.tsv   row, height, size, observed, possible (cross pairs behind it)
+  shards/<component>/cover<c>.nwk.gz  the prepared shard trees as the hierarchy reads them, one per line
+  shards/<component>/cover<c>.shards.tsv  shard, members held, branches collapsed, trimmed width
+
 group_id is the group's antenomen: an identity carried from release to release (seqhesion.lineage:
 a group inherits the id of its mutual best match in the previous release when they share more
 than half their inputs; otherwise a new id is minted). component is the tip_id of the component's first tip (most inputs,
@@ -52,7 +60,7 @@ import numpy as np
 from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
-SCHEMA = 'seqhesion-release/0'
+SCHEMA = 'seqhesion-release/0.1'
 COLUMNS = {
     'inputs.tsv': ['input_id', 'tip_id', 'status', 'component'],
     'tips.tsv': ['tip_id', 'component', 'n_inputs', 'seen', 'part'],
@@ -158,6 +166,102 @@ def previous_groups(prev):
         groups[r['group_id']] |= inputs_of[r['tip_id']]
     minted = [(r['group_id'], r['release']) for r in read_tsv(prev / 'minted.tsv')]
     return dict(groups), minted
+
+
+def dendrogram(linkage, tips):
+    """(Newick lines, one per forest part; merge rows) from hierarchy.build's linkage."""
+    Z, obs, pos = linkage['Z'], linkage['observed'], linkage['possible']
+    n = len(tips)
+    height = {i: 0.0 for i in range(n)}
+    children = {}
+    for k, (a, b, h, size) in enumerate(Z):
+        children[n + k] = (a, b)
+        height[n + k] = h
+    roots = []
+    for k, (a, b, h, size) in enumerate(Z):        # forest parts: rows at height None join them
+        if h is None:
+            for c in (a, b):
+                if height[c] is not None:
+                    roots.append(c)
+    if not roots:
+        roots = [n + len(Z) - 1] if Z else list(range(n))
+    seen_roots = []
+    for r in roots:                                  # a part may itself be a None-joined row's child only once
+        if r not in seen_roots:
+            seen_roots.append(r)
+    lines = []
+    for r in sorted(seen_roots, key=lambda r: -(Z[r - n][3] if r >= n else 1)):
+        out, stack = [], [(r, 'open')]
+        while stack:                                 # iterative: the tree can be deep
+            node, state = stack.pop()
+            parent_h = None
+            if state == 'open':
+                if node < n:
+                    out.append(('leaf', node))
+                else:
+                    a, b = children[node]
+                    stack.append((node, 'close'))
+                    stack.append((b, 'open'))
+                    stack.append((node, 'comma'))
+                    stack.append((a, 'open'))
+                    out.append(('(', node))
+            elif state == 'comma':
+                out.append((',', node))
+            else:
+                out.append((')', node))
+        parent_of = {}
+        for node, (a, b) in children.items():
+            parent_of[a] = node
+            parent_of[b] = node
+
+        def blen(node):
+            p = parent_of.get(node)
+            if p is None or height[p] is None:
+                return 0.0
+            return height[p] - height[node]
+        txt = []
+        for kind, node in out:
+            if kind == 'leaf':
+                txt.append(f'{tips[node]}:{blen(node):.6g}')
+            elif kind == '(':
+                txt.append('(')
+            elif kind == ',':
+                txt.append(',')
+            else:
+                lab = f'm{node - n}'
+                txt.append(f'){lab}' + (f':{blen(node):.6g}' if node != r else ''))
+        lines.append(''.join(txt) + ';')
+    rows = [{'row': k, 'height': h, 'size': size, 'observed': obs[k], 'possible': pos[k]} for k, (a, b, h, size) in enumerate(Z)]
+    return lines, rows
+
+
+def write_tree_data(out, comp, region_dir, h, tips, covers='covers'):
+    """dendrogram/ and shards/ for one component (schema 0.1)."""
+    import gzip
+    import shutil
+    from . import shardtrees
+    dd = out / 'dendrogram'
+    dd.mkdir(exist_ok=True)
+    if 'linkage' in h:
+        lines, rows = dendrogram(h['linkage'], tips)
+        (dd / f'{comp}.nwk').write_text('\n'.join(lines) + '\n')
+        with open(dd / f'{comp}.merges.tsv', 'w') as f:
+            f.write('row\theight\tsize\tobserved\tpossible\n')
+            for r in rows:
+                f.write(f"{r['row']}\t{_fmt(r['height'])}\t{r['size']}\t{r['observed']}\t{r['possible']}\n")
+    sd = out / 'shards' / comp
+    sd.mkdir(parents=True, exist_ok=True)
+    cd = Path(region_dir) / covers
+    for c in (0, 1):
+        nwk, idx = shardtrees.paths(cd, c)
+        with open(nwk, 'rb') as src, gzip.open(sd / f'cover{c}.nwk.gz', 'wb') as dst:
+            shutil.copyfileobj(src, dst)
+        names, _, widths = shardtrees.read(cd, c)
+        held = [l.rstrip('\n').split('\t') for l in open(idx)]
+        with open(sd / f'cover{c}.shards.tsv', 'w') as f:
+            f.write('shard\tmembers_held\tcollapsed\twidth\n')
+            for (name, m, col), w in zip(held, widths):
+                f.write(f'{name}\t{m}\t{col}\t{w}\n')
 
 
 def write_release(out, input_dir, intake_dir, components, all_components, threads=8, log=print, settings=None, previous=None,
@@ -268,6 +372,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                     membership=lv['membership'][i], votes=lv['m_votes'][i], partners=lv['m_partners'][i],
                     pull=p[0] if p is not None else None, pull_target=target,
                     pull_votes=p[2] if p is not None else None)
+        write_tree_data(out, comp, region_dir, h, tips, covers)
         meta['components'].append({'component': comp, 'tips': len(tips), 'groups': len(h['nodes']), 'region_dir': str(region_dir),
                                    'forest': h['forest'], 'provenance': h['provenance']})
         meta['method'], meta['join'] = h['method'], h['join']
@@ -314,6 +419,12 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
         'units': {'level, spread, distance': 'tree distance, substitutions per site (median over shard trees)',
                   'stem': 'expected changes (branch length x trimmed alignment columns), median over shards',
                   'identity': 'vsearch --allpairs_global --iddef 2, fraction'},
+        'tree_data': {'dendrogram': 'average linkage over observed pairs of the per-pair median join level (identical join; '
+                                    'clade-diameter scale, not branch length); draw ultrametric; structure below ~0.005 is weak',
+                      'shards': 'prepared shard trees (rooted on the scaffold, scaffold pruned, branches under half an expected '
+                                'change collapsed); cover 0 is the primary; patristic = FastTree GTR+gamma path length on '
+                                'trimmed columns; one tree is one sample, the hierarchy uses medians over shards',
+                      'stability': 'drawings change with every full rebuild (a new cover); antenomina carry across'},
         'group_id': 'antenomen: carried from the previous release on a mutual best match sharing > 1/2 of the inputs both '
                     'releases hold, else newly minted (see lineage.tsv, minted.tsv)',
         'placements': placed,

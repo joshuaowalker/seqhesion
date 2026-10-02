@@ -93,7 +93,8 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', primary=0, procs=8,
     for c in (0, 1):
         _, lines, widths = read[c]
         keys, med, _, kv = consensus_levels(lines, widths, index, procs, join)
-        covers[c] = {'keys': keys, 'kv': kv, 'Z': hierarchy(keys, med, n)[0]}
+        Z, obs, pos = hierarchy(keys, med, n)
+        covers[c] = {'keys': keys, 'kv': kv, 'Z': Z, 'observed': obs, 'possible': pos}
         log(f'cover {c}: {len(keys):,} co-sampled pairs')
     shard_names, lines, width = read[P]
     dkeys, dist, _, _ = consensus_levels(lines, width, index, procs, 'patristic')
@@ -212,4 +213,11 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', primary=0, procs=8,
         'levels': out_levels,
         'nodes': nodes,
         'shard_trees': lines,
+        # the dendrogram the levels are cut from (primary cover): scipy linkage rows [a, b, height,
+        # size], height None for rows joining forest parts (no observed pair between them), with the
+        # observed and possible cross pairs behind each merge
+        'linkage': {'Z': [[int(r[0]), int(r[1]), (None if not np.isfinite(r[2]) else float(r[2])), int(r[3])]
+                          for r in covers[P]['Z']],
+                    'observed': [int(x) for x in covers[P]['observed']],
+                    'possible': [int(x) for x in covers[P]['possible']]},
     }
