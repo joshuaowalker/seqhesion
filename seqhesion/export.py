@@ -19,12 +19,14 @@ Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30). No labels anywhe
   lineage.tsv      event (continued / born / retired), group_id, previous_id, jaccard, shared,
                    new_common, old_common: every group's best match in the previous release and
                    every previous group's best match here, over the inputs both releases hold
-  placements.tsv   every ITS2-only input (intake class its2), placed beside its closest tips, ITS2 to
-                   ITS2 (seqhesion.place): input_id, status (placed / not_built / spans_components /
-                   no_match / no_its2), component, group_id and level (the finest group holding all
-                   its closest tips; empty: the component only), identity, margin (to the best match
-                   outside that group), n_closest, closest (up to 20 tip ids). Placements never
-                   shape the hierarchy; trust one at its own level, not finer.
+  placements.tsv   every ITS2-only input (intake class its2), placed through the shard trees
+                   (seqhesion.place, seqhesion.insert): input_id, status (placed / ungrouped /
+                   not_built / spans_components / no_match / no_its2), component, group_id and level
+                   (the finest group it joins; its ancestors follow from groups.tsv), join (its
+                   average join level to that group, tree distance), shards (shard trees it was
+                   placed in), rearranged (of those, how many re-inferences moved its surroundings: a
+                   strain signal), candidate and candidate_identity (the tip and vsearch ITS2
+                   identity used only to choose where to look). Placements never shape the hierarchy.
   minted.tsv       every group id ever minted, with the release that minted it (never reused)
   membership.tsv   tip_id, level, group_id (empty: in no group), membership, votes, partners,
                    pull, pull_target (a group_id, or a tip_id for an ungrouped tip; empty when nothing
@@ -159,7 +161,7 @@ def previous_groups(prev):
 
 
 def write_release(out, input_dir, intake_dir, components, all_components, threads=8, log=print, settings=None, previous=None,
-                  place_its2=True):
+                  place_its2=True, covers='covers'):
     """components: [(region_dir, hierarchy dict from hierarchy.build or its JSON)] to publish.
     all_components: every component of the intake (lists of tip ids), for inputs.tsv.
     previous: the previous release directory, whose group ids are carried forward."""
@@ -285,7 +287,8 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
 
     placed = None
     if place_its2:
-        prow, placed = place.place_inputs(intake_dir, classes, built_group_at, meta['levels'], comp_of, threads, log)
+        covers_of = {c['component']: Path(c['region_dir']) / covers for c in meta['components']}
+        prow, placed = place.place_inputs(intake_dir, classes, built_group_at, meta['levels'], comp_of, covers_of, threads, log)
         pt = Table(out, 'placements.tsv')
         for r in prow:
             pt.row(**r)

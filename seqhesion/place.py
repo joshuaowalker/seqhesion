@@ -1,15 +1,17 @@
-"""Placing ITS2-only sequences beside their closest tips (Josh, 2026-09-30).
+"""Placing ITS2-only inputs on the hierarchy (Josh, 2026-09-30 / 2026-10-02).
 
-ITS2-only inputs never shape the hierarchy; they are placed on it afterwards:
-  * ITS2 is cut out of every tip (pyitsx extract --region ITS2; a tip is oriented full ITS, and its
-    ITS2 matched the ITS2 cut from the raw input in 299 of 300 checked) and out of every query;
-  * each query is compared with the tips' ITS2 (vsearch --usearch_global, global identity, --iddef 2);
-    its closest tips are all those at the best identity (ties are common: ITS2 resolves less than
-    full ITS);
-  * it is placed in the finest group that holds every one of those closest tips. If they span
-    groups even at the coarsest level, it is placed in their component only.
-Reported per query: the closest tips' identity and how many there are, the group and level placed
-at, and the margin to the best match outside that group.
+ITS2-only inputs never shape the hierarchy; they are placed on it afterwards, through the shard
+trees (seqhesion.insert), never by an identity threshold:
+  * ITS2 is cut out of every query and every tip (pyitsx extract --region ITS2);
+  * candidate search (sampling only): the query's ITS2 against all tips' ITS2 (vsearch); the
+    candidate is the closest tip (ties: the first id);
+  * the query's ITS2 is added as a fragment to the shards where the candidate is central, and
+    assigned to the finest group whose average join level to it is within the level (and that
+    group's ancestors).
+Statuses: placed (in a group at some level) / ungrouped (in the component, but no group within any
+level) / not_built (the candidate's component is not in this release) / spans_components (equally
+close candidates in more than one component) / no_match (no tip ITS2 within the search's 70%
+identity floor) / no_its2 (pyitsx found no ITS2 in the query).
 """
 import collections
 import os
@@ -60,27 +62,8 @@ def closest(queries, refs, threads=8, exclude=None):
     return dict(out)
 
 
-def place(hits, levels, group_at):
-    """hits: closest() for one query; levels: finest first; group_at[level][tip] -> group id or None.
-    Returns (identity, closest tips, level placed at or None, group or None, margin): margin is the
-    best identity minus the best identity of any tip outside the placed group (None if none seen)."""
-    if not hits:
-        return None
-    best = hits[0][0]
-    top = [r for i, ids in hits if i == best for r in ids]
-    level = group = None
-    for L in levels:
-        gs = {group_at[L].get(t) for t in top}
-        if len(gs) == 1 and None not in gs:
-            level, group = L, gs.pop()
-            break
-    outside = [i for i, ids in hits for r in ids if group is None and r not in top or group is not None and group_at[level].get(r) != group]
-    margin = best - max(outside) if outside else None
-    return best, sorted(top), level, group, margin
-
-
-PLACE_COLUMNS = ['input_id', 'status', 'component', 'group_id', 'level', 'identity', 'margin', 'n_closest', 'closest']
-MAX_LISTED = 20
+PLACE_COLUMNS = ['input_id', 'status', 'component', 'group_id', 'level', 'join', 'shards', 'rearranged',
+                 'candidate', 'candidate_identity']
 
 
 def cached_its2(seqs, path, cpus=8):
@@ -100,11 +83,12 @@ def cached_its2(seqs, path, cpus=8):
     return got
 
 
-def place_inputs(intake_dir, classes, built_group_at, levels, comp_of, threads=8, log=print):
-    """Rows of placements.tsv for every ITS2-only input. Queries are compared with the ITS2 of ALL
-    tips of the intake, so that one whose relatives lie in a component this release did not build
-    is reported as such instead of being placed beside a distant built tip.
-    built_group_at[level][tip] -> group id (None: in no group) for tips of built components."""
+def place_inputs(intake_dir, classes, built_group_at, levels, comp_of, covers_of, threads=8, log=print):
+    """Rows of placements.tsv for every ITS2-only input. covers_of: {component: covers directory}
+    for the components this release built. The candidate search compares with ALL tips of the
+    intake, so a query whose relatives lie in an unbuilt component is reported as not_built rather
+    than placed beside a distant built tip."""
+    from . import insert
     intake_dir = Path(intake_dir)
     tips = read_fasta(intake_dir / 'full.derep.fasta')
     raw = read_fasta(intake_dir / 'readable.fasta')
@@ -112,31 +96,39 @@ def place_inputs(intake_dir, classes, built_group_at, levels, comp_of, threads=8
     tip_its2 = cached_its2(tips, intake_dir / 'tips.its2.fasta', threads)
     q_its2 = cached_its2(queries, intake_dir / 'its2_inputs.its2.fasta', threads)
     hits = closest(q_its2, tip_its2, threads)
-    built = set().union(*(set(g) for g in built_group_at.values())) if built_group_at else set()
-    rows, status = [], collections.Counter()
+    rows = {}
+    todo = collections.defaultdict(list)
     for q in sorted(queries):
         row = dict.fromkeys(PLACE_COLUMNS)
         row['input_id'] = q
+        rows[q] = row
         if q not in q_its2:
             row['status'] = 'no_its2'
-        elif q not in hits:
+            continue
+        if q not in hits:
             row['status'] = 'no_match'
-        else:
-            best = hits[q][0][0]
-            top = sorted({r for i, ids in hits[q] if i == best for r in ids})
-            comps = {comp_of.get(t) for t in top}
-            row.update(identity=round(best, 4), n_closest=len(top), closest=','.join(top[:MAX_LISTED]))
-            if len(comps) > 1:
-                row['status'] = 'spans_components'
-            elif not set(top) <= built:
-                row['status'] = 'not_built'
-                row['component'] = comps.pop()
-            else:
-                row['component'] = comps.pop()
-                own = [(i, [r for r in ids if r in built]) for i, ids in hits[q]]
-                _, _, level, group, margin = place(own, levels, built_group_at)
-                row.update(status='placed', group_id=group, level=level, margin=None if margin is None else round(margin, 4))
-        status[row['status']] += 1
-        rows.append(row)
+            continue
+        best = hits[q][0][0]
+        top = sorted({r for i, ids in hits[q] if i == best for r in ids})
+        comps = {comp_of.get(t) for t in top}
+        row.update(candidate=top[0], candidate_identity=round(best, 4))
+        if len(comps) > 1:
+            row['status'] = 'spans_components'
+            continue
+        comp = comps.pop()
+        row['component'] = comp
+        if comp not in covers_of:
+            row['status'] = 'not_built'
+            continue
+        todo[comp].append((q, q_its2[q], True, top[0]))
+    for comp, qs in todo.items():
+        log(f'placing {len(qs)} ITS2-only inputs in component {comp}')
+        res = insert.place(qs, covers_of[comp], built_group_at, levels, threads, log)
+        for q, r in res.items():
+            k = next((i for i, g in enumerate(r['groups']) if g is not None), None)
+            rows[q].update(status='placed' if k is not None else 'ungrouped',
+                           group_id=r['groups'][k] if k is not None else None, level=levels[k] if k is not None else None,
+                           join=None if r['join'] is None else round(r['join'], 5), shards=r['shards'], rearranged=r['rearranged'])
+    status = collections.Counter(r['status'] for r in rows.values())
     log(f'ITS2-only placements: {dict(status)}')
-    return rows, dict(status)
+    return [rows[q] for q in sorted(rows)], dict(status)
