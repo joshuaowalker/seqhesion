@@ -9,6 +9,16 @@ processing path reads them, and agreement with labels is never a target. Choosin
 become named units is curation, and happens downstream (for MycoMap, in mm-to-ref); curated
 labels come back only as test cases.
 
+## Principles
+
+- **Label-blind.** Labels may travel with the input for display; nothing in the processing path
+  reads them, and agreement with labels is never a target.
+- **Tree distance and identity distance are not comparable.** Every grouping and placement decision
+  is made from the shard trees (tree distance: model-corrected, on trimmed columns, sub-resolution
+  branches collapsed). Alignment identity (vsearch) is used only for sampling-type approximate
+  searches: which sequences form a component or a shard, the scaffold, which shards to place a
+  sequence into. The `identity_*` columns of a release are reporting for consumers, not evidence.
+
 ## How it works
 
 1. **Intake.** Input ids are content hashes (min of sha256 of the cleaned sequence and of its
