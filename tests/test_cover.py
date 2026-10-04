@@ -70,3 +70,13 @@ def test_as_context_and_shard_input():
     assert s['members'] == ['a', 'b'] and s['context'] == ['x', 'y']
     # the tree input is the same as before the split: everything sorted, then the scaffold not in it
     assert shard_input(small, 'c0.0000') == shard_input(man, 'c0.0000') == ['a', 'b', 'x', 'y', 's1', 's2']
+
+
+def test_twins_are_cover1_shards_with_a_cover0_member_set():
+    man = {'scaffold': ['s'], 'shards': {
+        'a0': {'cover': 0, 'members': ['x', 'y', 'z']},
+        'b0': {'cover': 0, 'members': ['p', 'q'], 'context': ['c']},
+        'a1': {'cover': 1, 'members': ['z', 'x', 'y']},              # same set, other order: a twin
+        'b1': {'cover': 1, 'members': ['p', 'q']},                   # context differs: not a twin
+        'c1': {'cover': 1, 'members': ['x', 'y']}}}                  # a subset: not a twin
+    assert cover.twins(man) == {'a1': 'a0'}

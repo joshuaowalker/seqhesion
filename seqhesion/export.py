@@ -1,6 +1,8 @@
 """A release: the hierarchy of one or more components as TSV tables plus a JSON manifest.
 
-Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30). No labels anywhere.
+Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30); 0.2 (2026-10-04): the hierarchy
+pools both covers, and replication / votes_replicate are replaced by pull_max / margin. No labels
+anywhere.
 
   manifest.json    schema, seqhesion commit, the input (directory + fingerprint), method, levels,
                    components built, counts, and the columns of every table
@@ -11,10 +13,13 @@ Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30). No labels anywhe
   tips.tsv         tip_id, component, n_inputs, seen (held by some shard), part (forest part, 0 = largest)
   groups.tsv       one row per distinct group (the same tips over a run of levels), measured at its
                    coarsest level: group_id, component, n_tips, level_min, level_max, parent_id,
-                   cohesion, votes, replication, votes_replicate, held, stem, stem_shards,
+                   cohesion, votes, pull_max, margin, held, stem, stem_shards,
                    spread, spread_median, identity_min, identity_median, nearest_id, nearest_distance,
                    second_id, second_distance, gap, clade, unresolved, conflict, whole
-  group_levels.tsv group_id, level, cohesion, votes, replication, votes_replicate, held
+  group_levels.tsv group_id, level, cohesion, votes, pull_max, margin, held
+                   cohesion: share of the shard votes on the group's pairs that join them at or
+                   below the level; pull_max: the strongest share joining any member to something
+                   outside; margin = cohesion - pull_max, the confidence measure (seqhesion.hierarchy)
   group_members.tsv group_id, tip_id
   lineage.tsv      event (continued / born / retired), group_id, previous_id, jaccard, shared,
                    new_common, old_common: every group's best match in the previous release and
@@ -33,12 +38,14 @@ Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30). No labels anywhe
                    outside joins it at this level), pull_votes; pull empty: no outside evidence at all
 
 Tree data (schema 0.1, for drawing and on-demand distances; see the release manifest's notes):
-  dendrogram/<component>.nwk          the average-linkage dendrogram the levels are cut from (primary
-                                      cover): one Newick line per forest part, internal nodes m<row>,
+  dendrogram/<component>.nwk          the average-linkage dendrogram the levels are cut from: one
+                                      Newick line per forest part, internal nodes m<row>,
                                       branch lengths = height differences (ultrametric)
   dendrogram/<component>.merges.tsv   row, height, size, observed, possible (cross pairs behind it)
   shards/<component>/cover<c>.nwk.gz  the prepared shard trees as the hierarchy reads them, one per line
-  shards/<component>/cover<c>.shards.tsv  shard, members held, branches collapsed, trimmed width
+  shards/<component>/cover<c>.shards.tsv  shard, members held, branches collapsed, trimmed width,
+                                      twin_of (cover 1: the cover-0 shard with the same members, so the
+                                      same tree, counted once by the hierarchy; else empty)
 
 group_id is the group's antenomen: an identity carried from release to release (seqhesion.lineage:
 a group inherits the id of its mutual best match in the previous release when they share more
@@ -60,15 +67,15 @@ import numpy as np
 from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
-SCHEMA = 'seqhesion-release/0.1'
+SCHEMA = 'seqhesion-release/0.2'
 COLUMNS = {
     'inputs.tsv': ['input_id', 'tip_id', 'status', 'component'],
     'tips.tsv': ['tip_id', 'component', 'n_inputs', 'seen', 'part'],
     'groups.tsv': ['group_id', 'component', 'n_tips', 'level_min', 'level_max', 'parent_id', 'cohesion', 'votes',
-                   'replication', 'votes_replicate', 'held', 'stem', 'stem_shards', 'spread', 'spread_median',
+                   'pull_max', 'margin', 'held', 'stem', 'stem_shards', 'spread', 'spread_median',
                    'identity_min', 'identity_median', 'nearest_id', 'nearest_distance', 'second_id', 'second_distance',
                    'gap', 'clade', 'unresolved', 'conflict', 'whole'],
-    'group_levels.tsv': ['group_id', 'level', 'cohesion', 'votes', 'replication', 'votes_replicate', 'held'],
+    'group_levels.tsv': ['group_id', 'level', 'cohesion', 'votes', 'pull_max', 'margin', 'held'],
     'group_members.tsv': ['group_id', 'tip_id'],
     'lineage.tsv': ['event', 'group_id', 'previous_id', 'jaccard', 'shared', 'new_common', 'old_common'],
     'minted.tsv': ['group_id', 'release'],
@@ -252,6 +259,8 @@ def write_tree_data(out, comp, region_dir, h, tips, covers='covers'):
     sd = out / 'shards' / comp
     sd.mkdir(parents=True, exist_ok=True)
     cd = Path(region_dir) / covers
+    from .cover import twins
+    twin_of = twins(json.load(open(cd / 'manifest.json')))
     for c in (0, 1):
         nwk, idx = shardtrees.paths(cd, c)
         with open(nwk, 'rb') as src, gzip.open(sd / f'cover{c}.nwk.gz', 'wb') as dst:
@@ -259,9 +268,9 @@ def write_tree_data(out, comp, region_dir, h, tips, covers='covers'):
         names, _, widths = shardtrees.read(cd, c)
         held = [l.rstrip('\n').split('\t') for l in open(idx)]
         with open(sd / f'cover{c}.shards.tsv', 'w') as f:
-            f.write('shard\tmembers_held\tcollapsed\twidth\n')
+            f.write('shard\tmembers_held\tcollapsed\twidth\ttwin_of\n')
             for (name, m, col), w in zip(held, widths):
-                f.write(f'{name}\t{m}\t{col}\t{w}\n')
+                f.write(f'{name}\t{m}\t{col}\t{w}\t{twin_of.get(name, "")}\n')
 
 
 def next_name(releases_dir, kind, now=None):
@@ -356,7 +365,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                 group_id=G(nd_i), component=comp, n_tips=len(tips_of_node[nd_i]),
                 level_min=h['levels'][nd['kmin']]['level'], level_max=lv['level'],
                 parent_id=G(parent) if parent is not None else None,
-                cohesion=g['cohesion'], votes=g['votes'], replication=g['replication'], votes_replicate=g['votes1'],
+                cohesion=g['cohesion'], votes=g['votes'], pull_max=g['pull_max'], margin=g['margin'],
                 held=g['held'], stem=nd['stem'], stem_shards=nd['stem_n'], spread=nd['spread'], spread_median=nd['spread_median'],
                 identity_min=ident[nd_i][0], identity_median=ident[nd_i][1],
                 nearest_id=G(node_at[k][near[2]]) if near else None, nearest_distance=near[0] if near else None,
@@ -368,7 +377,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                 built_group_at[lv['level']][t] = G(node_at[k][gi]) if gi >= 0 else None
             for g in lv['groups']:
                 tables['group_levels.tsv'].row(group_id=G(g['node']), level=lv['level'], cohesion=g['cohesion'], votes=g['votes'],
-                                               replication=g['replication'], votes_replicate=g['votes1'], held=g['held'])
+                                               pull_max=g['pull_max'], margin=g['margin'], held=g['held'])
             for i, t in enumerate(tips):
                 gi = lv['group_of'][i]
                 p = lv['pull'][i]
@@ -438,7 +447,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
         'tree_data': {'dendrogram': 'average linkage over observed pairs of the per-pair median join level (identical join; '
                                     'clade-diameter scale, not branch length); draw ultrametric; structure below ~0.005 is weak',
                       'shards': 'prepared shard trees (rooted on the scaffold, scaffold pruned, branches under half an expected '
-                                'change collapsed); cover 0 is the primary; patristic = FastTree GTR+gamma path length on '
+                                'change collapsed); the hierarchy pools both covers, a cover-1 shard with twin_of set counted once; patristic = FastTree GTR+gamma path length on '
                                 'trimmed columns; one tree is one sample, the hierarchy uses medians over shards',
                       'stability': 'drawings change with every full rebuild (a new cover); antenomina carry across'},
         'group_id': 'antenomen: carried from the previous release on a mutual best match sharing > 1/2 of the inputs both '

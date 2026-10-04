@@ -29,3 +29,9 @@ def test_central_shards_prefers_the_seed_then_neighbour_rank():
                       's3': {'cover': 0, 'members': ['y', 'z', 't']}, 's4': {'cover': 1, 'members': ['q', 't']},
                       's5': {'cover': 0, 'members': ['y', 'z']}}}
     assert insert.central_shards(man, 't', per_cover=2) == ['s2', 's1', 's4']
+
+
+def test_central_shards_skip_a_cover1_twin():
+    man = {'shards': {'s1': {'cover': 0, 'members': ['t', 'x']}, 's2': {'cover': 1, 'members': ['x', 't']},
+                      's3': {'cover': 1, 'members': ['y', 't']}}}
+    assert insert.central_shards(man, 't', per_cover=2) == ['s1', 's3']

@@ -57,11 +57,14 @@ def shard_mask(trees_dir, shard):
 
 def central_shards(manifest, tip, per_cover=SHARDS_PER_COVER):
     """The shards of each cover holding `tip`, where it is most central (its rank among the members:
-    the seed first, then its neighbours by identity)."""
+    the seed first, then its neighbours by identity). A cover-1 shard that is a twin of a cover-0
+    shard (cover.twins: the same sample) is skipped."""
+    from .cover import twins
+    skip = twins(manifest)
     out = []
     for c in (0, 1):
         held = sorted((s['members'].index(tip), name) for name, s in manifest['shards'].items()
-                      if s['cover'] == c and tip in s['members'])
+                      if s['cover'] == c and tip in s['members'] and name not in skip)
         out += [name for _, name in held[:per_cover]]
     return out
 

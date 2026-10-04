@@ -3,20 +3,30 @@
 Method: for every pair of tips, each shard holding both records the diameter of the smallest
 clade holding them (inside a polytomy, tips closer than one expected change -- which the data
 cannot tell apart -- join at their own span: `coassoc.joins`, 'identical'); the median over
-shards is the pair's join level; average linkage over observed pairs only builds one hierarchy
-from the primary cover, and parts no observed pair connects stay a forest. It is cut at a series
-of levels.
+shards is the pair's join level; average linkage over observed pairs only builds one hierarchy,
+and parts no observed pair connects stay a forest. It is cut at a series of levels.
+
+The shards are POOLED over both covers (Josh, 2026-10-04): every distinct shard tree counts once.
+The two covers are drawn independently, so dense neighbourhoods often give both the same shard
+(55-61% of cover 1 over the Agaricales build); such a twin (`cover.twins`) is the same sample and
+the same tree, counted once. Until v6 the hierarchy used cover 0 alone and cover 1 'replicated'
+it; that one fixed split-half agreement was dropped: on 334 components it did not predict which
+groups survive resampling the shards, while the margin below did (lab, experiments/seqhesion).
 
 All shares are POOLED: every shard's verdict on a pair is one vote (`coassoc.pooled`).
 Per group and level:
-  cohesion      share of the votes on the group's pairs, in the primary cover, that join the
-                pair at or below the level, with the votes behind it
-  replication   the same over the other cover, which the hierarchy never saw
-  held          share of the group's pairs that some primary-cover shard holds
+  cohesion      share of the votes on the group's pairs that join the pair at or below the
+                level, with the votes behind it
+  pull_max      the strongest outside pull on any member (tip pull below; 0 with no outside votes)
+  margin        cohesion - pull_max: how much more the shards join the group's own pairs than
+                they join any member to something outside. The confidence measure: it predicts
+                which groups recur when the shards are resampled (AUC 0.92 for recurring in under
+                half of 20 bootstrap resamples) better than cohesion (0.80) or pull alone (0.89)
+  held          share of the group's pairs that some shard holds
 Per tip and level:
   membership    the same over its pairs with the rest of its group, with votes and partners
   pull          the same against the outside group (or ungrouped tip) it scores highest with
-Per distinct group (a node: the same tips over a run of levels), from the primary cover's trees:
+Per distinct group (a node: the same tips over a run of levels), from the pooled shard trees:
   shards        every shard holding >= 2 of its tips: tips held, outsiders held, verdict (clade /
                 unresolved / conflict / whole), stem when a clade (expected changes), and the
                 pairs it joins at the node's coarsest level
@@ -35,15 +45,15 @@ from pathlib import Path
 
 import numpy as np
 
-from . import provenance, shardtrees
+from . import cover, provenance, shardtrees
 from .coassoc import VERDICTS, consensus_levels, hierarchy, pooled, separation, shard_evidence, votes_at
-from .stats import adjusted_rand
 
 METHOD = ('co-association hierarchy: per pair, median over shards holding both of the diameter of '
           'the smallest clade holding them, except that inside a polytomy tips closer than one expected '
           'change join at their own span (join "identical"); average linkage over observed pairs only; shares pooled '
           'over shard votes; per node: shard evidence, spread and nearest relatives from median '
-          'patristic distances, nearest relative = nearest outside group; stand-alone (no stitch); v5 (2026-09-30)')
+          'patristic distances, nearest relative = nearest outside group; stand-alone (no stitch); shards pooled over '
+          'both covers, cross-cover twins once; per group: cohesion, pull_max, margin (no replication); v6 (2026-10-04)')
 
 LEVELS = (0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075, 0.1)
 
@@ -77,59 +87,62 @@ def cut(Z, level):
     return np.array([gid.get(g, -1) for g in p.tolist()])
 
 
-def build(covers_dir, tips, levels=LEVELS, join='identical', primary=0, procs=8, log=print):
+def build(covers_dir, tips, levels=LEVELS, join='identical', procs=8, log=print):
     """The hierarchy over `tips` (ids, in index order) from a covers directory whose shard trees
-    have been prepared (`shardtrees.export`, both covers). Returns a dict; tips are referred to by
-    index into `tips`, shards by index into `shards`."""
+    have been prepared (`shardtrees.export`, both covers), pooled: every distinct shard tree of both
+    covers, a cover-1 twin of a cover-0 shard (`cover.twins`) counted once. Returns a dict; tips are
+    referred to by index into `tips`, shards by index into `shards`."""
     from scipy.cluster.hierarchy import fcluster
     cd = Path(covers_dir)
     levels = sorted(float(x) for x in levels)
     n = len(tips)
     index = {t: i for i, t in enumerate(tips)}
 
-    P, R = primary, 1 - primary          # primary and replicate cover
-    read = {c: shardtrees.read(cd, c) for c in (0, 1)}
-    covers = {}
+    man = json.load(open(cd / 'manifest.json'))
+    skip = cover.twins(man)
+    shard_names, lines, width = [], [], []
     for c in (0, 1):
-        _, lines, widths = read[c]
-        keys, med, _, kv = consensus_levels(lines, widths, index, procs, join)
-        Z, obs, pos = hierarchy(keys, med, n)
-        covers[c] = {'keys': keys, 'kv': kv, 'Z': Z, 'observed': obs, 'possible': pos}
-        log(f'cover {c}: {len(keys):,} co-sampled pairs')
-    shard_names, lines, width = read[P]
+        for name, line, w in zip(*shardtrees.read(cd, c)):
+            if name not in skip:
+                shard_names.append(name)
+                lines.append(line)
+                width.append(w)
+    keys, med, _, kv = consensus_levels(lines, width, index, procs, join)
+    Z, observed, possible = hierarchy(keys, med, n)
+    log(f'{len(lines)} distinct shard trees (both covers; {len(skip)} cover-1 twins counted once): '
+        f'{len(keys):,} co-sampled pairs')
     dkeys, dist, _, _ = consensus_levels(lines, width, index, procs, 'patristic')
-    # the forest: parts of the primary hierarchy that no observed pair connects (0 = the largest)
-    top = fcluster(covers[P]['Z'], t=np.finfo(float).max, criterion='distance')
+    # the forest: parts of the hierarchy that no observed pair connects (0 = the largest)
+    top = fcluster(Z, t=np.finfo(float).max, criterion='distance')
     part_size = collections.Counter(top.tolist())
     part_rank = {c: r for r, (c, _) in enumerate(sorted(part_size.items(), key=lambda x: (-x[1], x[0])))}
     part = [part_rank[c] for c in top.tolist()]
-    seen = [np.zeros(n, bool), np.zeros(n, bool)]
-    for c in (0, 1):
-        k = covers[c]['keys']
-        seen[c][np.unique(np.r_[k // n, k % n])] = True
-    both_seen = seen[0] & seen[1]
+    seen = np.zeros(n, bool)
+    seen[np.unique(np.r_[keys // n, keys % n])] = True
 
     out_levels = []
     for L in levels:
-        lab = {c: cut(covers[c]['Z'], L) for c in (0, 1)}
-        group_of = lab[P]
+        group_of = cut(Z, L)
         G = int(group_of.max()) + 1
-        s0 = pooled(*votes_at(*covers[P]['kv'], L), n, group_of)
-        s1 = pooled(*votes_at(*covers[R]['kv'], L), n, group_of)     # replication: the other cover's votes
+        s0 = pooled(*votes_at(*kv, L), n, group_of)
+        # the strongest outside pull on any member (no outside evidence: 0)
+        tip_pull = np.where(s0['p_group'] == -2, 0.0, np.nan_to_num(s0['pull']))
+        pull_max = np.zeros(G)
+        inside = group_of >= 0
+        np.maximum.at(pull_max, group_of[inside], tip_pull[inside])
         groups = []
         for k in range(G):
             members = np.flatnonzero(group_of == k)
             pairs = len(members) * (len(members) - 1) // 2
+            coh = rnd(s0['cohesion'][k])
             groups.append({'id': k, 'tips': members.tolist(),
-                           'cohesion': rnd(s0['cohesion'][k]), 'votes': int(s0['c_votes'][k]),
-                           'replication': rnd(s1['cohesion'][k]), 'votes1': int(s1['c_votes'][k]),
-                           'seen1': round(float(s1['c_pairs'][k] / pairs), 3),
+                           'cohesion': coh, 'votes': int(s0['c_votes'][k]),
+                           'pull_max': rnd(pull_max[k]),
+                           'margin': rnd(coh - pull_max[k]) if coh is not None else None,
                            'held': round(float(s0['c_pairs'][k] / pairs), 3)})
-        a0, a1 = np.where(group_of >= 0, group_of, -1 - np.arange(n)), np.where(lab[R] >= 0, lab[R], -1 - np.arange(n))
         out_levels.append({
             'level': L,
             'summary': {'groups': G, 'tips_in_groups': int(np.sum(group_of >= 0)),
-                        'ari_covers': round(adjusted_rand(a0[both_seen], a1[both_seen]), 3),
                         'largest': int(max((len(g['tips']) for g in groups), default=0)),
                         'held_p10': round(float(np.quantile([g['held'] for g in groups], 0.1)), 3) if groups else None},
             'groups': groups,
@@ -141,7 +154,7 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', primary=0, procs=8,
             'pull': [None if g == -2 else [round(float(v), 3), int(g), int(pv), int(pp)] + ([int(pt)] if g == -1 else [])
                      for v, g, pv, pp, pt in zip(s0['pull'], s0['p_group'], s0['p_votes'], s0['p_partners'], s0['p_tip'])],
         })
-        log(f'level {L}: {G} groups over {int(np.sum(group_of >= 0))} tips; ARI covers {out_levels[-1]["summary"]["ari_covers"]}')
+        log(f'level {L}: {G} groups over {int(np.sum(group_of >= 0))} tips')
 
     # nesting: each group's parent at the next coarser level, children at the next finer one
     K = len(levels)
@@ -166,9 +179,7 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', primary=0, procs=8,
             grp['node'] = node_of[key]
     log(f'{len(nodes)} distinct groups (nodes)')
 
-    # shard evidence per node, from the primary cover's prepared trees
-    man = json.load(open(cd / 'manifest.json'))
-    assert all(man['shards'][s]['cover'] == P for s in shard_names)
+    # shard evidence per node, from the pooled shard trees
     tip_shards = [[] for _ in range(n)]                  # which shards hold each tip
     for k, s_name in enumerate(shard_names):
         for t in man['shards'][s_name]['members']:
@@ -205,19 +216,19 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', primary=0, procs=8,
         del nd['tips']
 
     return {
-        'method': METHOD, 'primary_cover': P, 'join': join,
+        'method': METHOD, 'covers': 'pooled', 'twins': len(skip), 'join': join,
         'provenance': provenance.hierarchy_key(cd, METHOD, {'levels': levels, 'join': join, 'distance': 'patristic median'}),
         'verdicts': list(VERDICTS), 'shards': shard_names, 'distance_floor': round(floor, 5),
         'forest': sorted(part_size.values(), reverse=True),
-        'tips': [{'id': t, 'seen': bool(seen[P][i]), 'part': part[i], 'shards': tip_shards[i]} for i, t in enumerate(tips)],
+        'tips': [{'id': t, 'seen': bool(seen[i]), 'part': part[i], 'shards': tip_shards[i]} for i, t in enumerate(tips)],
         'levels': out_levels,
         'nodes': nodes,
         'shard_trees': lines,
-        # the dendrogram the levels are cut from (primary cover): scipy linkage rows [a, b, height,
+        # the dendrogram the levels are cut from: scipy linkage rows [a, b, height,
         # size], height None for rows joining forest parts (no observed pair between them), with the
         # observed and possible cross pairs behind each merge
         'linkage': {'Z': [[int(r[0]), int(r[1]), (None if not np.isfinite(r[2]) else float(r[2])), int(r[3])]
-                          for r in covers[P]['Z']],
-                    'observed': [int(x) for x in covers[P]['observed']],
-                    'possible': [int(x) for x in covers[P]['possible']]},
+                          for r in Z],
+                    'observed': [int(x) for x in observed],
+                    'possible': [int(x) for x in possible]},
     }

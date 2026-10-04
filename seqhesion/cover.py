@@ -181,6 +181,17 @@ def shard_input(manifest, name):
     return sorted(inside) + [t for t in manifest['scaffold'] if t not in have]
 
 
+def twins(manifest):
+    """{cover-1 shard: the cover-0 shard with exactly its member set}. The two covers are drawn
+    independently, so in dense neighbourhoods they often draw the same shard (55-61% of cover 1
+    over the Agaricales build): the same sample, so the same tree. The hierarchy pools both covers
+    and counts such a shard once (Josh, 2026-10-04); placement skips it likewise."""
+    key = lambda s: frozenset(s['members']) | frozenset(s.get('context', []))  # noqa: E731
+    first = {key(s): name for name, s in sorted(manifest['shards'].items()) if s['cover'] == 0}
+    return {name: first[key(s)] for name, s in sorted(manifest['shards'].items())
+            if s['cover'] == 1 and key(s) in first}
+
+
 def as_context(manifest, own):
     """A small region's manifest: each shard's tips from outside the component (`own`) become
     context -- in the tree, rooting candidates, pruned before co-association -- and shards left with

@@ -37,9 +37,11 @@ labels come back only as test cases.
    sequences the data cannot tell apart join at their own span). The median over shards is the
    pair's join level. Average linkage over *observed pairs only* gives one hierarchy; pairs no
    shard holds are no evidence, and parts nothing connects stay a forest.
+   Both covers are pooled; a shard both covers drew (same members, so the same tree) counts once.
 6. **Evidence.** The hierarchy is cut at levels 0.005 ... 0.1. Per group: cohesion (shard votes
-   joining its pairs), replication (the same votes from the other cover, which the hierarchy
-   never saw), held (share of its pairs any shard holds). Per sequence: membership and the
+   joining its pairs), pull_max (the strongest share of votes joining any member to something
+   outside), margin = cohesion - pull_max (the confidence measure: it predicts which groups
+   survive resampling the shards), held (share of its pairs any shard holds). Per sequence: membership and the
    strongest outside pull. Per distinct group: every shard's verdict (clade / unresolved /
    conflict), stem length, spread, nearest outside group and the gap to it.
 

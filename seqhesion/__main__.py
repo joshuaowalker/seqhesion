@@ -62,7 +62,7 @@ def cmd_hierarchy(a):
     rd = Path(a.region)
     tips = sorted(read_fasta(rd / 'comp.fasta'))
     levels = [float(x) for x in a.levels.split(',')]
-    res = hierarchy.build(rd / a.covers, tips, levels, a.join, a.primary, a.procs, log=_log)
+    res = hierarchy.build(rd / a.covers, tips, levels, a.join, a.procs, log=_log)
     res.pop('shard_trees')
     json.dump(res, open(a.out, 'w'), separators=(',', ':'))
     _log(f'wrote {a.out}')
@@ -115,7 +115,7 @@ def main(argv=None):
     p.add_argument('--min-id', type=float, default=80.0)
 
     def cover_args(p):
-        # always two covers: the hierarchy is built from one, and the other replicates it
+        # always two covers, drawn independently; the hierarchy pools them (cross-cover twins once)
         p.add_argument('--depth', type=int, default=3)
         p.add_argument('--size', type=int, default=150)
         p.add_argument('--quota', type=int, default=30,
@@ -125,7 +125,6 @@ def main(argv=None):
     def hier_args(p):
         p.add_argument('--levels', default=','.join(str(x) for x in (0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075, 0.1)))
         p.add_argument('--join', default='identical', choices=('diameter', 'compatible', 'identical'))
-        p.add_argument('--primary', type=int, default=0, choices=(0, 1))
 
     p = add('cover', cmd_cover, 'region')
     p.add_argument('--covers', default='covers')
