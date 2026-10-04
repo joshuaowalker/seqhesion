@@ -17,6 +17,9 @@ in any tree at all; still an outcome — a singleton nobody has placed).
 """
 import collections
 import csv
+import json
+import os
+from pathlib import Path
 
 
 def load_knn(path):
@@ -189,15 +192,41 @@ def _init_seqs(seqs):
     _SEQS.update(seqs)
 
 
+TREE_FILES = ('.fasta', '.aln.fasta', '.trim.fasta', '.nwk', '.nwk.key.json')     # the key sidecar last
+
+
 def build_trees(manifest, seqs, tree_dir, procs=6, log=print):
-    """One tree per shard under tree_dir, reusing any whose key matches. Returns trees reused."""
+    """One tree per shard under tree_dir, reusing any whose key matches. Returns trees reused.
+
+    Shards with the same input (ids in the same order; ids are content hashes, so the same
+    sequences) are built once: in dense neighbourhoods the two covers often draw identical shards
+    (30% of v4's trees). The twin gets byte copies of the first one's files, which is exactly
+    what building it again would give (one invocation, one result: verified under --thread 1)."""
+    import shutil
     from multiprocessing import Pool
-    jobs = [(name, shard_input(manifest, name), str(tree_dir)) for name in manifest['shards']]
+    from . import cache
+    twins = {}
+    for name in manifest['shards']:
+        twins.setdefault(tuple(shard_input(manifest, name)), []).append(name)
+    jobs = [(names[0], list(ids), str(tree_dir)) for ids, names in twins.items()]
     reused = 0
     with Pool(procs, initializer=_init_seqs, initargs=(seqs,)) as pool:
         for i, (_, r) in enumerate(pool.imap_unordered(_tree_job, jobs), 1):
             reused += r
             if i % 40 == 0:
                 log(f'  {i}/{len(jobs)} trees')
-    log(f'trees: {reused} reused, {len(jobs) - reused} built')
+    td = Path(tree_dir)
+    copied = 0
+    for ids, names in twins.items():
+        first, key = names[0], json.load(open(td / f'{names[0]}.nwk.key.json'))['key']
+        for twin in names[1:]:
+            if cache.valid(td / f'{twin}.nwk', key, tips=ids):
+                reused += 1
+                continue
+            for ext in TREE_FILES:
+                shutil.copyfile(td / f'{first}{ext}', td / f'{twin}{ext}.tmp')
+                os.replace(td / f'{twin}{ext}.tmp', td / f'{twin}{ext}')
+            copied += 1
+    n = len(manifest['shards'])
+    log(f'trees: {reused} reused, {n - reused - copied} built, {copied} copied from an identical shard')
     return reused

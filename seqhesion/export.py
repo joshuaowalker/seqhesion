@@ -409,6 +409,8 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
         for r in prow:
             pt.row(**r)
         pt.close()
+    else:
+        Table(out, 'placements.tsv').close()      # the table is always there; empty when placement was skipped
 
     status = collections.Counter()
     inputs = Table(out, 'inputs.tsv')
@@ -441,7 +443,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                       'stability': 'drawings change with every full rebuild (a new cover); antenomina carry across'},
         'group_id': 'antenomen: carried from the previous release on a mutual best match sharing > 1/2 of the inputs both '
                     'releases hold, else newly minted (see lineage.tsv, minted.tsv)',
-        'placements': placed,
+        'placements': placed if place_its2 else 'skipped (ITS2-only inputs stay dropped:its2)',
         'lineage': {'carried': len(inherit), 'new': len(new) - len(inherit), 'events': dict(events)},
         'components': meta['components'],
         'counts': {'inputs': sum(status.values()), 'status': dict(status), 'tips': len(tip_seqs),

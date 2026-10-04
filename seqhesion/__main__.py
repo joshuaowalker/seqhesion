@@ -80,7 +80,7 @@ def cmd_release(a):
         rd, hj = spec.split('=', 1)
         comps.append((rd, json.load(open(hj))))
     export.write_release(a.out, a.input, a.intake, comps, regions.components(a.intake, a.min_id), a.procs, log=_log,
-                         settings={'component_min_id': a.min_id}, previous=a.previous)
+                         settings={'component_min_id': a.min_id}, previous=a.previous, place_its2=not a.no_place_its2)
     if a.latest:
         link = Path(a.out).parent / 'latest'
         tmp = Path(a.out).parent / '.latest.tmp'
@@ -141,6 +141,8 @@ def main(argv=None):
     p.add_argument('--min-id', type=float, default=80.0, help='the centroid identity components were cut at')
     p.add_argument('--previous', help='the previous release directory, whose group ids (antenomina) are carried forward')
     p.add_argument('--latest', action='store_true', help="point <releases>/latest at this release")
+    p.add_argument('--no-place-its2', action='store_true',
+                   help='skip ITS2-only placement (hours at scale on one machine); those inputs stay dropped:its2')
     a = ap.parse_args(argv)
     a.fn(a)
 
