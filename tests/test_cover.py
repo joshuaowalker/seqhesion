@@ -57,3 +57,16 @@ def test_identical_neighbourhoods_are_reported_not_hidden():
     assert len({frozenset(m) for _, m in shards}) == len(shards)
     acct = cover.account(everyone, nbrs, shards, 20, 3)
     assert all(acct['under'][q] == 1 for q in clique)
+
+
+def test_as_context_and_shard_input():
+    from seqhesion.cover import as_context, shard_input
+    man = {'scaffold': ['s1', 'b', 's2'], 'shards': {
+        'c0.0000': {'cover': 0, 'seed': 'a', 'members': ['a', 'x', 'b', 'y']},
+        'c0.0001': {'cover': 0, 'seed': 'a', 'members': ['a', 'x', 'y']}}}
+    small = as_context(man, {'a', 'b'})
+    assert list(small['shards']) == ['c0.0000']                      # one own tip left: dropped
+    s = small['shards']['c0.0000']
+    assert s['members'] == ['a', 'b'] and s['context'] == ['x', 'y']
+    # the tree input is the same as before the split: everything sorted, then the scaffold not in it
+    assert shard_input(small, 'c0.0000') == shard_input(man, 'c0.0000') == ['a', 'b', 'x', 'y', 's1', 's2']

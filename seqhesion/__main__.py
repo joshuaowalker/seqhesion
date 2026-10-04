@@ -35,10 +35,17 @@ def cmd_cover(a):
     cd = rd / a.covers
     cd.mkdir(exist_ok=True)
     seqs = read_fasta(rd / 'comp.fasta')
+    own = set(seqs)
+    small = json.load(open(rd / 'region.json')).get('kind') == 'small'
     nbrs = cover.load_knn(rd / 'knn.tsv')
+    if small:            # neighbours from the whole corpus; seeds only from the component's own tips
+        seqs.update(read_fasta(rd / 'context.fasta'))
+        nbrs = {t: [x for x in nbrs.get(t, []) if x != t] for t in sorted(own)}
     ident = cover.load_identity(rd / 'knn.tsv') if a.quota else None
-    man = cover.plan(nbrs, set(seqs), cover.scaffold_of(rd / 'comp_cent_0.85.fasta'), 2, a.depth, a.size,
+    man = cover.plan(nbrs, own, cover.scaffold_of(rd / 'comp_cent_0.85.fasta'), 2, a.depth, a.size,
                      a.quota, a.quota_id, ident, log=_log)
+    if small:
+        man = cover.as_context(man, own)
     json.dump(man, open(cd / 'manifest.json', 'w'))
     cover.build_trees(man, seqs, cd / 'trees', a.procs, log=_log)
 

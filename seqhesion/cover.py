@@ -173,10 +173,24 @@ def plan(nbrs, all_ids, scaffold, covers=2, depth=3, size=150, quota=0, quota_id
 
 
 def shard_input(manifest, name):
-    """A shard's tree input, in order: its members sorted, then the scaffold tips not already in it."""
-    members = manifest['shards'][name]['members']
-    mem = set(members)
-    return sorted(members) + [s for s in manifest['scaffold'] if s not in mem]
+    """A shard's tree input, in order: its members and context tips sorted together, then the
+    scaffold tips not already in it. (Only small regions' shards have context; see as_context.)"""
+    s = manifest['shards'][name]
+    inside = list(s['members']) + list(s.get('context', []))
+    have = set(inside)
+    return sorted(inside) + [t for t in manifest['scaffold'] if t not in have]
+
+
+def as_context(manifest, own):
+    """A small region's manifest: each shard's tips from outside the component (`own`) become
+    context -- in the tree, rooting candidates, pruned before co-association -- and shards left with
+    fewer than two of the component's own tips are dropped (no pair to join)."""
+    shards = {}
+    for name, s in manifest['shards'].items():
+        mine = [m for m in s['members'] if m in own]
+        if len(mine) >= 2:
+            shards[name] = {**s, 'members': mine, 'context': [m for m in s['members'] if m not in own]}
+    return {**manifest, 'shards': shards, 'small': True}
 
 
 _SEQS = {}

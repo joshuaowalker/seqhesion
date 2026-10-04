@@ -9,6 +9,15 @@ A region directory holds:
   knn.tsv                vsearch --usearch_global --self --id 0.80: the neighbourhoods shards are made of
   comp_cent_0.85.fasta   85% centroids with sizes: scaffold candidates (rooting context)
   region.json            how it was made
+
+A SMALL region (a component smaller than one shard; decided 2026-10-03) also holds
+  context.fasta          the outside sequences its shards draw on
+and its knn.tsv lists each tip's neighbours in the WHOLE corpus (vsearch floor SMALL_KNN_ID), so its
+shards are seeded from its own tips but filled with their nearest sequences anywhere. Those outside
+sequences are rooting context only: pruned before co-association, never grouped. Built alone, such a
+component's shards hold all of it and its only rooting candidates are its own tips (lab
+experiments/seqhesion/small_components.py: 0% of its tips join another component's tips at levels
+<= 0.075, so pruning loses nothing). Its scaffold is the neighbourhood's 85% centroids.
 """
 import collections
 import json
@@ -21,6 +30,9 @@ from . import cache
 from .fasta import read_fasta, write_fasta
 
 KNN = ['--id', '0.80', '--maxaccepts', '400', '--maxrejects', '64']
+SMALL_KNN_ID = 0.60
+SHARD = 150                     # cover.plan's shard size: a component smaller than this is small
+QUOTA = 30
 
 
 def _strip(h):
@@ -114,3 +126,52 @@ def regions(intake_dir, out_dir, min_id=80.0, min_size=2, threads=6, log=print):
         make_region({i: seqs[i] for i in ids}, sizes, Path(out_dir) / f'r{k:04d}', threads,
                     how={'intake': str(intake_dir), 'min_id': min_id, 'component': k})
     return kept
+
+
+def small_regions(intake_dir, comps, out_dir, threads=6, log=print):
+    """Region dirs for small components (2 to SHARD - 1 tips): one corpus-wide neighbour search for
+    all their tips, then per component comp.fasta, context.fasta, knn.tsv, comp_cent_0.85.fasta and
+    region.json (kind 'small'). Directories are named by anchor, the tip with most copies. Returns them."""
+    d, out_dir = Path(intake_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    seqs = read_fasta(d / 'full.derep.fasta')
+    sizes = copies(intake_dir)
+    comps = [sorted(c) for c in comps if 2 <= len(c) < SHARD]
+    dirs = [out_dir / min(c, key=lambda t: (-sizes[t], t)) for c in comps]
+    todo = [(c, rd) for c, rd in zip(comps, dirs) if not (rd / 'region.json').exists()]
+    if not todo:
+        return dirs
+    q, hits = out_dir / 'small_queries.fasta', out_dir / 'small_knn_corpus.tsv'
+    write_fasta(q, seqs, sorted(t for c, _ in todo for t in c))
+    subprocess.run(['vsearch', '--usearch_global', str(q), '--db', str(d / 'full.derep.fasta'), '--self', '--id', str(SMALL_KNN_ID),
+                    '--maxaccepts', '400', '--maxrejects', '64', '--threads', str(threads), '--userout', f'{hits}.tmp',
+                    '--userfields', 'query+target+id', '--quiet'], stderr=subprocess.DEVNULL, check=True)
+    os.replace(f'{hits}.tmp', hits)
+    rows = collections.defaultdict(list)
+    for line in open(hits):
+        rows[line.split('\t', 1)[0]].append(line)
+    for c, rd in todo:
+        rd.mkdir(parents=True, exist_ok=True)
+        C = set(c)
+        with open(rd / 'knn.tsv', 'w') as f:
+            for t in c:
+                f.writelines(rows.get(t, []))
+        ranked = {t: [x for _, x in sorted(((float(l.rstrip().split('\t')[2]), l.split('\t')[1]) for l in rows.get(t, [])),
+                                          reverse=True)] for t in c}
+        nbhd = C | {x for t in c for x in ranked[t][:SHARD - 1 + QUOTA]}
+        outside = sorted(nbhd - C)
+        write_fasta(rd / 'comp.fasta', {t: seqs[t] for t in c}, sorted(c, key=lambda i: (-sizes[i], i)))
+        write_fasta(rd / 'context.fasta', {t: seqs[t] for t in outside}, outside)
+        sized = rd / 'nbhd.sized.fasta'
+        order = sorted(nbhd, key=lambda i: (-sizes.get(i, 1), i))
+        write_fasta(sized, {f'{i};size={sizes.get(i, 1)}': seqs[i] for i in order})
+        subprocess.run(['vsearch', '--cluster_fast', str(sized), '--id', '0.85', '--centroids', str(rd / 'comp_cent_0.85.fasta'),
+                        '--sizein', '--sizeout', '--threads', str(threads), '--quiet'], stderr=subprocess.DEVNULL, check=True)
+        sized.unlink()
+        json.dump({'kind': 'small', 'intake': str(intake_dir), 'sequences': len(c), 'context': len(outside),
+                   'sequences_hash': cache.sequences_hash({t: seqs[t] for t in c}, sorted(c, key=lambda i: (-sizes[i], i)))[:16],
+                   'knn': f'vsearch --usearch_global against the whole corpus --id {SMALL_KNN_ID} --maxaccepts 400 --maxrejects 64'},
+                  open(rd / 'region.json', 'w'), indent=1)
+    q.unlink()
+    log(f'small regions: {len(todo)} made, {len(dirs) - len(todo)} already there')
+    return dirs
