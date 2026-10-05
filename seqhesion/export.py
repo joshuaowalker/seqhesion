@@ -3,7 +3,19 @@
 Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30); 0.2 (2026-10-04): the hierarchy
 pools both covers, and replication / votes_replicate are replaced by pull_max / margin; 0.3 (same
 day): pull_max (a maximum over members, which saturated in large groups) is replaced by pull, the
-members' outside pulls pooled over votes, and margin = cohesion - pull. No labels anywhere.
+members' outside pulls pooled over votes, and margin = cohesion - pull; 0.4 (2026-10-05): with
+release --layer, coarse levels 0.125 ... 0.5 from the coarse layer (seqhesion.sparse) follow the
+fine ones in every table. No labels anywhere.
+
+Coarse levels (> 0.1): the units are the fine groups at 0.1 (and lone tips). A coarse group of
+2+ units is a new group: cohesion / votes / pull / margin / held count UNIT-PAIR votes from the
+sparse shards (held = share of its unit pairs observed); stem, spread, identity, nearest and the
+verdict counts are empty (no tree-level evidence for it). A fine group still alone at a coarse
+level is the same group continuing: its groups.tsv row keeps its fine-level evidence, level_max
+reaches its coarsest level, and its group_levels.tsv rows there carry only pull (no unit pairs
+inside it). membership.tsv at a coarse level gives each tip its unit's values (partners empty).
+The dendrogram is the fine linkage inside each unit and the layer's above them, so every group at
+every level is a clade of it; a layer merge below 0.1 is drawn just above it.
 
   manifest.json    schema, seqhesion commit, the input (directory + fingerprint), method, levels,
                    components built, counts, and the columns of every table
@@ -69,7 +81,7 @@ import numpy as np
 from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
-SCHEMA = 'seqhesion-release/0.3'
+SCHEMA = 'seqhesion-release/0.4'
 COLUMNS = {
     'inputs.tsv': ['input_id', 'tip_id', 'status', 'component'],
     'tips.tsv': ['tip_id', 'component', 'n_inputs', 'seen', 'part'],
@@ -407,6 +419,8 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
         meta['components'].append({'component': comp, 'tips': len(tips), 'groups': len(h['nodes']), 'region_dir': str(region_dir),
                                    'forest': h['forest'], 'provenance': h['provenance']})
         meta['method'], meta['join'] = h['method'], h['join']
+        if h.get('layer'):
+            meta['layer'] = h['layer']['method']
         log(f'component {comp}: {len(tips)} tips, {len(h["nodes"])} groups')
     for t in tables.values():
         t.close()
@@ -464,6 +478,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
         'group_id': 'antenomen: carried from the previous release on a mutual best match sharing > 1/2 of the inputs both '
                     'releases hold, else newly minted (see lineage.tsv, minted.tsv)',
         'placements': placed if place_its2 else 'skipped (ITS2-only inputs stay dropped:its2)',
+        'coarse_layer': meta.get('layer'),
         'lineage': {'carried': len(inherit), 'new': len(new) - len(inherit), 'events': dict(events)},
         'components': meta['components'],
         'counts': {'inputs': sum(status.values()), 'status': dict(status), 'tips': len(tip_seqs),
