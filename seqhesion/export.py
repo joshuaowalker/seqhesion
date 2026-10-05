@@ -17,6 +17,16 @@ inside it). membership.tsv at a coarse level gives each tip its unit's values (p
 The dendrogram is the fine linkage inside each unit and the layer's above them, so every group at
 every level is a clade of it; a layer merge below 0.1 is drawn just above it.
 
+0.5 (2026-10-05, agreed with mm-to-ref): with release --corpus, CORPUS levels (0.4, 0.5, 0.75;
+manifest corpus_levels) relate components (seqhesion.corpus): their units are each component's
+groups at 0.3 (its coarse layer stops there) and lone tips. A corpus group of 2+ units is new; its
+`component` is empty when it spans several (n_components, a new groups.tsv column, says how many),
+its evidence counts unit-pair votes as for coarse groups. A component's top group still alone at
+a corpus level continues (same id, level_max beyond 0.3), and parent_id runs on through the corpus
+levels. dendrogram/corpus.nwk (+ .merges.tsv) is one tree of every built tip: the component trees
+up to 0.3 and the corpus layer above, every group at every level a clade of it; dendrogram/
+<component>.nwk stops at 0.3 (a forest of its 0.3 groups).
+
   manifest.json    schema, seqhesion commit, the input (directory + fingerprint), method, levels,
                    components built, counts, and the columns of every table
   inputs.tsv       input_id, tip_id, status, component
@@ -81,11 +91,11 @@ import numpy as np
 from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
-SCHEMA = 'seqhesion-release/0.4'
+SCHEMA = 'seqhesion-release/0.5'
 COLUMNS = {
     'inputs.tsv': ['input_id', 'tip_id', 'status', 'component'],
     'tips.tsv': ['tip_id', 'component', 'n_inputs', 'seen', 'part'],
-    'groups.tsv': ['group_id', 'component', 'n_tips', 'level_min', 'level_max', 'parent_id', 'cohesion', 'votes',
+    'groups.tsv': ['group_id', 'component', 'n_components', 'n_tips', 'level_min', 'level_max', 'parent_id', 'cohesion', 'votes',
                    'pull', 'margin', 'held', 'stem', 'stem_shards', 'spread', 'spread_median',
                    'identity_min', 'identity_median', 'nearest_id', 'nearest_distance', 'second_id', 'second_distance',
                    'gap', 'clade', 'unresolved', 'conflict', 'whole'],
@@ -261,6 +271,44 @@ def dendrogram(linkage, tips):
     return lines, rows
 
 
+def write_corpus(out, cx, tables, gid, built_comps, built_group_at, log=print):
+    """The corpus levels' rows (groups, members, group levels, membership) and dendrogram/corpus.*."""
+    comp_of_tip = {t: comp for _, _, tips, comp, _ in built_comps for t in tips}
+    for i, nd in enumerate(cx['nodes']):
+        key = ('C', i)
+        r = nd['rows'][nd['kmax']]
+        comps = {comp_of_tip[t] for t in nd['tips']}
+        tables['groups.tsv'].row(
+            group_id=gid[key], component=next(iter(comps)) if len(comps) == 1 else None, n_components=len(comps),
+            n_tips=len(nd['tips']), level_min=cx['levels'][nd['kmin']], level_max=cx['levels'][nd['kmax']],
+            parent_id=gid[nd['parent']] if nd['parent'] else None,
+            cohesion=r['cohesion'], votes=r['votes'], pull=r['pull'], margin=r['margin'], held=r['held'],
+            stem=None, stem_shards=None, spread=None, spread_median=None, identity_min=None, identity_median=None,
+            nearest_id=None, nearest_distance=None, second_id=None, second_distance=None, gap=None,
+            clade=None, unresolved=None, conflict=None, whole=None)
+        for t in nd['tips']:
+            tables['group_members.tsv'].row(group_id=gid[key], tip_id=t)
+        for k, rr in sorted(nd['rows'].items()):
+            tables['group_levels.tsv'].row(group_id=gid[key], level=cx['levels'][k], **rr)
+    for t, rows in cx['tip_rows'].items():
+        for k, (key, m, v, pull, target, pv) in enumerate(rows):
+            L = cx['levels'][k]
+            built_group_at[L][t] = gid[key] if key else None
+            tables['membership.tsv'].row(
+                tip_id=t, level=L, group_id=gid[key] if key else None, membership=m, votes=v, partners=None, pull=pull,
+                pull_target=(gid[target] if isinstance(target, tuple) else target), pull_votes=pv)
+    (link, order) = cx['linkage']
+    lines, rows = dendrogram(link, order)
+    dd = out / 'dendrogram'
+    dd.mkdir(exist_ok=True)
+    (dd / 'corpus.nwk').write_text('\n'.join(lines) + '\n')
+    with open(dd / 'corpus.merges.tsv', 'w') as f:
+        f.write('row\theight\tsize\tobserved\tpossible\n')
+        for r in rows:
+            f.write(f"{r['row']}\t{_fmt(r['height'])}\t{r['size']}\t{r['observed']}\t{r['possible']}\n")
+    log(f'corpus: {len(cx["nodes"])} groups, dendrogram/corpus.nwk {len(lines)} part(s) over {len(order)} tips')
+
+
 def write_tree_data(out, comp, region_dir, h, tips, covers='covers'):
     """dendrogram/ and shards/ for one component (schema 0.1)."""
     import gzip
@@ -304,10 +352,12 @@ def next_name(releases_dir, kind, now=None):
 
 
 def write_release(out, input_dir, intake_dir, components, all_components, threads=8, log=print, settings=None, previous=None,
-                  place_its2=True, covers='covers'):
+                  place_its2=True, covers='covers', corpus=None):
     """components: [(region_dir, hierarchy dict from hierarchy.build or its JSON)] to publish.
     all_components: every component of the intake (lists of tip ids), for inputs.tsv.
-    previous: the previous release directory, whose group ids are carried forward."""
+    previous: the previous release directory, whose group ids are carried forward.
+    corpus: (units.json, layer.json) of the corpus layer (seqhesion.corpus), whose levels follow
+    the components' own (their layers capped at its unit level)."""
     out = Path(out)
     release = out.name
     input_dir, intake_dir = Path(input_dir), Path(intake_dir)
@@ -338,8 +388,17 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                 tips_of_node[g['node']] = [tips[t] for t in g['tips']]
         built_comps.append((region_dir, h, tips, comp, tips_of_node))
 
+    cx = None
+    if corpus:
+        from . import corpus as corpus_mod
+        cx = corpus_mod.release_view([(tips, tn, {g['node'] for g in h['levels'][-1]['groups']}, h['linkage'])
+                                      for _, h, tips, _, tn in built_comps], *corpus)
+        log(f'corpus levels {cx["levels"]}: {len(cx["nodes"])} corpus groups')
+
     # antenomina: carry ids forward from the previous release, mint the rest
     new = {(ci, nd): set().union(*(inputs_of_tip[t] for t in tt)) for ci, (_, _, _, _, tn) in enumerate(built_comps) for nd, tt in tn.items()}
+    if cx:
+        new.update({('C', i): set().union(*(inputs_of_tip[t] for t in nd['tips'])) for i, nd in enumerate(cx['nodes'])})
     old, minted = previous_groups(previous) if previous else ({}, [])
     inherit, rows = lineage.match(new, old)
     taken = {g for g, _ in minted}
@@ -382,12 +441,17 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
             lv = h['levels'][k]
             g = next(x for x in lv['groups'] if x['node'] == nd_i)
             gt = next(x for x in h['levels'][kt]['groups'] if x['node'] == nd_i)
-            parent = node_at[kt + 1][gt['parent']] if gt['parent'] is not None else None
+            parent = (ci, node_at[kt + 1][gt['parent']]) if gt['parent'] is not None else None
+            level_max = h['levels'][kt]['level']
+            if cx and gt['parent'] is None:              # top of its component: the corpus levels go on
+                if (ci, nd_i) in cx['continues']:
+                    level_max = cx['levels'][cx['continues'][(ci, nd_i)]]
+                parent = cx['top_parent'].get((ci, nd_i))
             near, sec, v = nd['nearest'], nd['second'], nd['verdicts'] or [None] * 4
             tables['groups.tsv'].row(
-                group_id=G(nd_i), component=comp, n_tips=len(tips_of_node[nd_i]),
-                level_min=h['levels'][nd['kmin']]['level'], level_max=h['levels'][kt]['level'],
-                parent_id=G(parent) if parent is not None else None,
+                group_id=G(nd_i), component=comp, n_components=1, n_tips=len(tips_of_node[nd_i]),
+                level_min=h['levels'][nd['kmin']]['level'], level_max=level_max,
+                parent_id=gid[parent] if parent is not None else None,
                 cohesion=g['cohesion'], votes=g['votes'], pull=g['pull'], margin=g['margin'],
                 held=g['held'], stem=nd['stem'], stem_shards=nd['stem_n'], spread=nd['spread'], spread_median=nd['spread_median'],
                 identity_min=ident[nd_i][0], identity_median=ident[nd_i][1],
@@ -416,12 +480,24 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                     pull=p[0] if p is not None else None, pull_target=target,
                     pull_votes=p[2] if p is not None else None)
         write_tree_data(out, comp, region_dir, h, tips, covers)
+        if cx:
+            for key, kc in cx['continues'].items():
+                if key[0] != ci:
+                    continue
+                t0 = tips_of_node[key[1]][0]
+                for k in range(kc + 1):
+                    tables['group_levels.tsv'].row(group_id=gid[key], level=cx['levels'][k], cohesion=None, votes=0,
+                                                   pull=cx['tip_rows'][t0][k][3], margin=None, held=None)
         meta['components'].append({'component': comp, 'tips': len(tips), 'groups': len(h['nodes']), 'region_dir': str(region_dir),
                                    'forest': h['forest'], 'provenance': h['provenance']})
         meta['method'], meta['join'] = h['method'], h['join']
         if h.get('layer'):
             meta['layer'] = h['layer']['method']
         log(f'component {comp}: {len(tips)} tips, {len(h["nodes"])} groups')
+    if cx:
+        write_corpus(out, cx, tables, gid, built_comps, built_group_at, log)
+        meta['levels'] = meta['levels'] + cx['levels']
+        meta['corpus_levels'] = cx['levels']
     for t in tables.values():
         t.close()
     write_fasta(out / 'tips.fasta', tip_seqs, sorted(tip_seqs))
@@ -479,6 +555,8 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                     'releases hold, else newly minted (see lineage.tsv, minted.tsv)',
         'placements': placed if place_its2 else 'skipped (ITS2-only inputs stay dropped:its2)',
         'coarse_layer': meta.get('layer'),
+        'corpus_levels': meta.get('corpus_levels'),
+        'corpus_layer': corpus[1]['method'] if corpus else None,
         'lineage': {'carried': len(inherit), 'new': len(new) - len(inherit), 'events': dict(events)},
         'components': meta['components'],
         'counts': {'inputs': sum(status.values()), 'status': dict(status), 'tips': len(tip_seqs),

@@ -169,7 +169,7 @@ def _write(path, obj):
     Path(f'{path}.tmp').replace(path)
 
 
-def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print):
+def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print, levels=COARSE_LEVELS):
     """The layer over units from prepared shard trees: unit-pair medians of every vote on a tip
     pair spanning two units, average linkage over observed unit pairs, cut at COARSE_LEVELS."""
     n, U = len(tips), int(unit.max()) + 1
@@ -186,8 +186,8 @@ def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print)
     ukeys = UK[starts]
     umed = (UV[starts + (counts - 1) // 2] + UV[starts + counts // 2]) / 2
     Z, observed, possible = linkage(ukeys, umed, U)
-    levels = []
-    for L in COARSE_LEVELS:
+    out_levels = []
+    for L in levels:
         cg = cut(Z, L)
         CG = int(cg.max()) + 1
         st = pooled(*votes_at(UK, UV, L), U, cg)
@@ -203,25 +203,29 @@ def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print)
         # per unit: its outside pull at this level ([share, coarse group or -1 for a lone unit, votes, the unit])
         unit_pull = [None if g == -2 else [rnd(v), int(g), int(pv), int(pt)]
                      for v, g, pv, pt in zip(st['pull'], st['p_group'], st['p_votes'], st['p_tip'])]
-        levels.append({'level': L, 'unit_group': cg.tolist(), 'groups': groups, 'unit_pull': unit_pull,
+        out_levels.append({'level': L, 'unit_group': cg.tolist(), 'groups': groups, 'unit_pull': unit_pull,
                        'unit_membership': [rnd(x) for x in st['membership']], 'unit_m_votes': st['m_votes'].tolist()})
     log(f'layer: {U} units, {len(ukeys)} unit pairs observed ({len(ukeys) / max(1, U * (U - 1) // 2):.1%}), '
         f'median {int(np.median(counts)) if len(counts) else 0} votes; groups of 2+ units per level '
-        + ', '.join(f'{lv["level"]}: {len(lv["groups"])}' for lv in levels))
+        + ', '.join(f'{lv["level"]}: {len(lv["groups"])}' for lv in out_levels))
     return {'method': METHOD, 'unit_level': UNIT_LEVEL, 'units': U, 'unit_of_tip': unit.tolist(),
             'unit_pairs_observed': len(ukeys), 'unit_pairs': U * (U - 1) // 2,
             'linkage': [[int(r[0]), int(r[1]), None if not np.isfinite(r[2]) else float(r[2]), int(r[3])] for r in Z],
             'observed': [int(x) for x in observed], 'possible': [int(x) for x in possible],
-            'levels': levels}
+            'levels': out_levels}
 
 
-def add_layer(h, layer):
+def add_layer(h, layer, max_level=None):
     """The hierarchy `h` (hierarchy.build or its JSON) with the layer's coarse levels appended, in
     the same shape, so a release treats them like the fine ones. Per coarse level: groups of 2+
     units (layer evidence), plus every unit of 2+ tips still alone (the same node as its fine group,
     continuing); per tip, its unit's membership and pull. A node continuing from the fine levels
     keeps its fine measurement (kmax) and gains kmax_top, its coarsest level; nodes born in the
-    layer carry no tree-level evidence (stem, spread, nearest, verdicts: None)."""
+    layer carry no tree-level evidence (stem, spread, nearest, verdicts: None). With max_level,
+    only the coarse levels up to it (the corpus levels take over above: seqhesion.corpus), and
+    the dendrogram stops there too (a forest of the groups at max_level)."""
+    if max_level is not None:
+        layer = dict(layer, levels=[L for L in layer['levels'] if L['level'] <= max_level + 1e-9])
     tips = [t['id'] for t in h['tips']]
     assert layer['unit_level'] == UNIT_LEVEL and len(layer['unit_of_tip']) == len(tips)
     unit = np.array(layer['unit_of_tip'])
@@ -300,11 +304,11 @@ def add_layer(h, layer):
             finer = h['levels'][k - 1]['group_of']
             grp['children'] = sorted({finer[t] for t in grp['tips'] if finer[t] >= 0})
     h['layer'] = {k: v for k, v in layer.items() if k in ('method', 'unit_level', 'units', 'unit_pairs_observed', 'unit_pairs', 'source')}
-    h['linkage'] = combined_linkage(h['linkage'], layer, len(tips))
+    h['linkage'] = combined_linkage(h['linkage'], layer, len(tips), max_level)
     return h
 
 
-def combined_linkage(fine, layer, n):
+def combined_linkage(fine, layer, n, max_level=None):
     """The dendrogram every level is cut from: the fine linkage inside each unit (its subtree),
     the layer's linkage over units above them. A layer merge never sits below its children, nor at
     or below UNIT_LEVEL (it joins units the fine hierarchy keeps apart there): such heights are
@@ -341,6 +345,8 @@ def combined_linkage(fine, layer, n):
         na, nb = node[int(a)], node[int(b)]
         k = n + len(rows)
         h_ = None if ht is None else max(ht, hgt[na], hgt[nb], floor)
+        if max_level is not None and h_ is not None and h_ > max_level + 1e-9:
+            h_ = None                                   # above the cap: parts of a forest
         rows.append([na, nb, h_, size[na] + size[nb]])
         robs.append(layer['observed'][r])
         rpos.append(layer['possible'][r])

@@ -113,6 +113,24 @@ def cmd_sparse_build(a):
     sparse.build_local(rd, h, a.covers, a.procs, log=_log)
 
 
+def cmd_corpus_plan(a):
+    """Corpus levels, step 1 (needs the corpus): super-units, their neighbours, the cover over them."""
+    from . import corpus
+    corpus.plan(a.regions, a.intake, a.out, a.hierarchy, a.depth, threads=a.procs, log=_log, seed=a.seed)
+
+
+def cmd_corpus_trees(a):
+    """Corpus levels, step 2: the trees of one chunk of the plan (chunks are independent: AWS array)."""
+    from . import corpus
+    corpus.trees(a.out, a.chunk, a.of, a.procs, log=_log)
+
+
+def cmd_corpus_layer(a):
+    """Corpus levels, step 3: prepare every tree, build OUT/layer.json."""
+    from . import corpus
+    corpus.layer(a.out, a.procs, log=_log)
+
+
 def cmd_release(a):
     from . import export, regions
     if a.out == 'auto':
@@ -120,7 +138,13 @@ def cmd_release(a):
             raise SystemExit("OUT_DIR 'auto' needs --releases DIR")
         a.out = str(Path(a.releases) / export.next_name(a.releases, 'f'))
         _log(f'release name: {Path(a.out).name}')
-    from . import sparse
+    from . import corpus as corpus_mod, sparse
+    if a.corpus and not a.layer:
+        raise SystemExit('--corpus needs --layer (its units are the coarse groups at 0.3)')
+    corpus = None
+    if a.corpus:
+        cd = Path(a.corpus)
+        corpus = (json.load(open(cd / 'units.json')), json.load(open(cd / 'layer.json')))
     comps = []
     for spec in a.components:
         rd, hj = spec.split('=', 1)
@@ -129,10 +153,11 @@ def cmd_release(a):
             lj = Path(rd) / 'sparse' / 'layer.json'
             if not lj.exists():
                 raise SystemExit(f'{rd}: --layer, but no sparse/layer.json (run sparse-plan / sparse-build)')
-            h = sparse.add_layer(h, json.load(open(lj)))
+            h = sparse.add_layer(h, json.load(open(lj)), max_level=corpus_mod.UNIT_LEVEL if a.corpus else None)
         comps.append((rd, h))
     export.write_release(a.out, a.input, a.intake, comps, regions.components(a.intake, a.min_id), a.procs, log=_log,
-                         settings={'component_min_id': a.min_id}, previous=a.previous, place_its2=not a.no_place_its2)
+                         settings={'component_min_id': a.min_id}, previous=a.previous, place_its2=not a.no_place_its2,
+                         corpus=corpus)
     if a.latest:
         link = Path(a.out).parent / 'latest'
         tmp = Path(a.out).parent / '.latest.tmp'
@@ -190,6 +215,15 @@ def main(argv=None):
     p = add('sparse-build', cmd_sparse_build, 'region')
     p.add_argument('--hierarchy', default='hierarchy.json')
     p.add_argument('--covers', default='covers')
+    p = add('corpus-plan', cmd_corpus_plan, 'intake', 'out')
+    p.add_argument('regions', nargs='+')
+    p.add_argument('--hierarchy', default='hierarchy.json')
+    p.add_argument('--depth', type=int, default=6)
+    p.add_argument('--seed', type=int, default=0, help='an independent plan, for a stability check')
+    p = add('corpus-trees', cmd_corpus_trees, 'out')
+    p.add_argument('--chunk', type=int, default=0)
+    p.add_argument('--of', type=int, default=1)
+    add('corpus-layer', cmd_corpus_layer, 'out')
     p = add('release', cmd_release, 'out')
     p.add_argument('--releases', help="with OUT_DIR 'auto': the releases directory; the release is named YYYYMMDD.NN + f")
     p.add_argument('--input', required=True, help='the input directory (its manifest.json is recorded)')
@@ -200,6 +234,8 @@ def main(argv=None):
     p.add_argument('--latest', action='store_true', help="point <releases>/latest at this release")
     p.add_argument('--layer', action='store_true',
                    help="add each region's coarse layer (sparse/layer.json, from sparse-plan / sparse-build) above 0.1")
+    p.add_argument('--corpus', help='a corpus layer directory (corpus-plan / -trees / -layer): its levels follow the '
+                                    "components', whose layers then stop at 0.3")
     p.add_argument('--no-place-its2', action='store_true',
                    help='skip ITS2-only placement (hours at scale on one machine); those inputs stay dropped:its2')
     a = ap.parse_args(argv)
