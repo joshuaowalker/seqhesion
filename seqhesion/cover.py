@@ -141,7 +141,7 @@ def scaffold_of(centroids_fasta, n=N_SCAFFOLD):
     return [c for _, c in sorted(sized, reverse=True)[:n]]
 
 
-def plan(nbrs, all_ids, scaffold, covers=2, depth=3, size=150, quota=0, quota_id=97.0, ident=None, log=print, seed=0):
+def plan(nbrs, all_ids, scaffold, covers=2, depth=3, size=150, quota=0, quota_id=97.0, ident=None, log=print, draw=0):
     """The manifest of `covers` independent covers. With a context quota, every shard gets at
     least `quota` members below `quota_id` identity to its seed (its nearest such neighbours
     appended), since a dense species otherwise fills a window and is never seen against outsiders."""
@@ -149,7 +149,7 @@ def plan(nbrs, all_ids, scaffold, covers=2, depth=3, size=150, quota=0, quota_id
     manifest = {'scaffold': scaffold, 'shards': {}, 'quota': {'n': quota, 'below_identity': quota_id} if quota else None}
     topped = 0
     for ci in range(covers):
-        rng = random.Random(100 + ci + 1000 * seed)
+        rng = random.Random(100 + ci + 1000 * draw)
         shards = greedy_cover(nbrs, size, depth, rng)
         n_full = len(shards)
         shards += sparse_cover(nbrs, all_ids, shards, size, depth, rng)

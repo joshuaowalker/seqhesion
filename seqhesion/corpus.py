@@ -98,7 +98,7 @@ def plan(region_dirs, intake_dir, out, hierarchy_name='hierarchy.json', depth=DE
     Path(f'{hits}.tmp').replace(hits)
     ids = [f'u{u}' for u in range(U)]
     nbrs = {u: [v for v, _ in sorted(sim[u].items(), key=lambda x: (-x[1], x[0]))] for u in ids}
-    man_u = cover.plan(nbrs, ids, [], covers, depth, SIZE, log=log, seed=seed)
+    man_u = cover.plan(nbrs, ids, [], covers, depth, SIZE, log=log, draw=seed)
     shards = {}
     for name, s in sorted(man_u['shards'].items()):
         rng = random.Random(f'corpus:{seed}:{name}')
