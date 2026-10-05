@@ -17,11 +17,16 @@ All shares are POOLED: every shard's verdict on a pair is one vote (`coassoc.poo
 Per group and level:
   cohesion      share of the votes on the group's pairs that join the pair at or below the
                 level, with the votes behind it
-  pull_max      the strongest outside pull on any member (tip pull below; 0 with no outside votes)
-  margin        cohesion - pull_max: how much more the shards join the group's own pairs than
-                they join any member to something outside. The confidence measure: it predicts
-                which groups recur when the shards are resampled (AUC 0.92 for recurring in under
-                half of 20 bootstrap resamples) better than cohesion (0.80) or pull alone (0.89)
+  pull          the members' outside pulls, POOLED like cohesion: over every member, the votes
+                joining it to its strongest outside target (tip pull below) at or below the level,
+                over the votes on those pairs (`group_pull`). Not the maximum over members: a
+                member's pull often rests on a handful of votes (3 of 3 = 1.0), so a maximum
+                saturated in large groups (mm-to-ref found it in release 20261004.03f)
+  margin        cohesion - pull: how much more the shards join the group's own pairs than they
+                join its members to anything outside. The confidence measure: it predicts which
+                groups recur when the shards are resampled (AUC 0.94 for recurring in under half
+                of 20 bootstrap resamples, 0.87 for under 95%; 0.83 in groups of 101+ tips, where
+                the maximum managed 0.69) better than cohesion (0.80)
   held          share of the group's pairs that some shard holds
 Per tip and level:
   membership    the same over its pairs with the rest of its group, with votes and partners
@@ -53,7 +58,8 @@ METHOD = ('co-association hierarchy: per pair, median over shards holding both o
           'change join at their own span (join "identical"); average linkage over observed pairs only; shares pooled '
           'over shard votes; per node: shard evidence, spread and nearest relatives from median '
           'patristic distances, nearest relative = nearest outside group; stand-alone (no stitch); shards pooled over '
-          'both covers, cross-cover twins once; per group: cohesion, pull_max, margin (no replication); v6 (2026-10-04)')
+          'both covers, cross-cover twins once; per group: cohesion, pull (members\' outside pulls pooled over votes), '
+          'margin = cohesion - pull (no replication); v7 (2026-10-04)')
 
 LEVELS = (0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075, 0.1)
 
@@ -75,6 +81,19 @@ def _evidence(job):
 
 def rnd(x, d=3):
     return None if x is None or (isinstance(x, float) and np.isnan(x)) else round(float(x), d)
+
+
+def group_pull(s, group_of, G):
+    """Per group, its members' outside pulls pooled over votes (`coassoc.pooled` output `s`): the
+    votes joining each member to its strongest outside target, over the votes on those pairs. A
+    member with nothing outside joining counts its outside votes with no hits; one with no outside
+    votes counts nothing. A group with no outside votes at all: 0."""
+    v = np.where(s['p_group'] == -2, 0, s['p_votes']).astype(float)
+    h = np.rint(np.nan_to_num(s['pull']) * v)
+    inside = group_of >= 0
+    H = np.bincount(group_of[inside], h[inside], G)
+    V = np.bincount(group_of[inside], v[inside], G)
+    return np.where(V > 0, H / np.maximum(V, 1), 0.0)
 
 
 def cut(Z, level):
@@ -125,11 +144,7 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', procs=8, log=print)
         group_of = cut(Z, L)
         G = int(group_of.max()) + 1
         s0 = pooled(*votes_at(*kv, L), n, group_of)
-        # the strongest outside pull on any member (no outside evidence: 0)
-        tip_pull = np.where(s0['p_group'] == -2, 0.0, np.nan_to_num(s0['pull']))
-        pull_max = np.zeros(G)
-        inside = group_of >= 0
-        np.maximum.at(pull_max, group_of[inside], tip_pull[inside])
+        pull = group_pull(s0, group_of, G)
         groups = []
         for k in range(G):
             members = np.flatnonzero(group_of == k)
@@ -137,8 +152,8 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', procs=8, log=print)
             coh = rnd(s0['cohesion'][k])
             groups.append({'id': k, 'tips': members.tolist(),
                            'cohesion': coh, 'votes': int(s0['c_votes'][k]),
-                           'pull_max': rnd(pull_max[k]),
-                           'margin': rnd(coh - pull_max[k]) if coh is not None else None,
+                           'pull': rnd(pull[k]),
+                           'margin': rnd(coh - pull[k]) if coh is not None else None,
                            'held': round(float(s0['c_pairs'][k] / pairs), 3)})
         out_levels.append({
             'level': L,

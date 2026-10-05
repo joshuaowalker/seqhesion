@@ -148,3 +148,14 @@ def test_identical_join_only_joins_tips_below_resolution_inside_a_polytomy():
     k = {x: ids.index(index[x]) for x in 'abcd'}
     assert J[k['a'], k['b']] == 0.001                     # indistinguishable: joined at their span
     assert J[k['a'], k['c']] == 0.05                      # distinguishable: the polytomy's width
+
+
+def test_group_pull_pools_member_pulls_over_votes():
+    import numpy as np
+    from seqhesion.hierarchy import group_pull
+    # group 0: a pull of 1.0 on 3 votes and 0.1 on 100 votes; group 1: nothing outside joins (-3,
+    # 40 outside votes) and no outside votes at all (-2); tip 4 is ungrouped and ignored
+    s = {'pull': np.array([1.0, 0.1, 0.0, 0.0, 0.9]), 'p_votes': np.array([3, 100, 40, 0, 10]),
+         'p_group': np.array([1, 1, -3, -2, 0])}
+    p = group_pull(s, np.array([0, 0, 1, 1, -1]), 2)
+    assert abs(p[0] - 13 / 103) < 1e-12 and p[1] == 0.0

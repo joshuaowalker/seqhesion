@@ -39,8 +39,8 @@ labels come back only as test cases.
    shard holds are no evidence, and parts nothing connects stay a forest.
    Both covers are pooled; a shard both covers drew (same members, so the same tree) counts once.
 6. **Evidence.** The hierarchy is cut at levels 0.005 ... 0.1. Per group: cohesion (shard votes
-   joining its pairs), pull_max (the strongest share of votes joining any member to something
-   outside), margin = cohesion - pull_max (the confidence measure: it predicts which groups
+   joining its pairs), pull (its members' votes joining them to their strongest outside target,
+   pooled the same way), margin = cohesion - pull (the confidence measure: it predicts which groups
    survive resampling the shards), held (share of its pairs any shard holds). Per sequence: membership and the
    strongest outside pull. Per distinct group: every shard's verdict (clade / unresolved /
    conflict), stem length, spread, nearest outside group and the gap to it.

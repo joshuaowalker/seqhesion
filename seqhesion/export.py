@@ -1,8 +1,9 @@
 """A release: the hierarchy of one or more components as TSV tables plus a JSON manifest.
 
 Schema seqhesion-release/0 (agreed with mm-to-ref, 2026-09-30); 0.2 (2026-10-04): the hierarchy
-pools both covers, and replication / votes_replicate are replaced by pull_max / margin. No labels
-anywhere.
+pools both covers, and replication / votes_replicate are replaced by pull_max / margin; 0.3 (same
+day): pull_max (a maximum over members, which saturated in large groups) is replaced by pull, the
+members' outside pulls pooled over votes, and margin = cohesion - pull. No labels anywhere.
 
   manifest.json    schema, seqhesion commit, the input (directory + fingerprint), method, levels,
                    components built, counts, and the columns of every table
@@ -13,13 +14,14 @@ anywhere.
   tips.tsv         tip_id, component, n_inputs, seen (held by some shard), part (forest part, 0 = largest)
   groups.tsv       one row per distinct group (the same tips over a run of levels), measured at its
                    coarsest level: group_id, component, n_tips, level_min, level_max, parent_id,
-                   cohesion, votes, pull_max, margin, held, stem, stem_shards,
+                   cohesion, votes, pull, margin, held, stem, stem_shards,
                    spread, spread_median, identity_min, identity_median, nearest_id, nearest_distance,
                    second_id, second_distance, gap, clade, unresolved, conflict, whole
-  group_levels.tsv group_id, level, cohesion, votes, pull_max, margin, held
+  group_levels.tsv group_id, level, cohesion, votes, pull, margin, held
                    cohesion: share of the shard votes on the group's pairs that join them at or
-                   below the level; pull_max: the strongest share joining any member to something
-                   outside; margin = cohesion - pull_max, the confidence measure (seqhesion.hierarchy)
+                   below the level; pull: over every member, the votes joining it to its strongest
+                   outside target over the votes on those pairs (pooled, like cohesion); margin =
+                   cohesion - pull, the confidence measure (seqhesion.hierarchy)
   group_members.tsv group_id, tip_id
   lineage.tsv      event (continued / born / retired), group_id, previous_id, jaccard, shared,
                    new_common, old_common: every group's best match in the previous release and
@@ -67,15 +69,15 @@ import numpy as np
 from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
-SCHEMA = 'seqhesion-release/0.2'
+SCHEMA = 'seqhesion-release/0.3'
 COLUMNS = {
     'inputs.tsv': ['input_id', 'tip_id', 'status', 'component'],
     'tips.tsv': ['tip_id', 'component', 'n_inputs', 'seen', 'part'],
     'groups.tsv': ['group_id', 'component', 'n_tips', 'level_min', 'level_max', 'parent_id', 'cohesion', 'votes',
-                   'pull_max', 'margin', 'held', 'stem', 'stem_shards', 'spread', 'spread_median',
+                   'pull', 'margin', 'held', 'stem', 'stem_shards', 'spread', 'spread_median',
                    'identity_min', 'identity_median', 'nearest_id', 'nearest_distance', 'second_id', 'second_distance',
                    'gap', 'clade', 'unresolved', 'conflict', 'whole'],
-    'group_levels.tsv': ['group_id', 'level', 'cohesion', 'votes', 'pull_max', 'margin', 'held'],
+    'group_levels.tsv': ['group_id', 'level', 'cohesion', 'votes', 'pull', 'margin', 'held'],
     'group_members.tsv': ['group_id', 'tip_id'],
     'lineage.tsv': ['event', 'group_id', 'previous_id', 'jaccard', 'shared', 'new_common', 'old_common'],
     'minted.tsv': ['group_id', 'release'],
@@ -365,7 +367,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                 group_id=G(nd_i), component=comp, n_tips=len(tips_of_node[nd_i]),
                 level_min=h['levels'][nd['kmin']]['level'], level_max=lv['level'],
                 parent_id=G(parent) if parent is not None else None,
-                cohesion=g['cohesion'], votes=g['votes'], pull_max=g['pull_max'], margin=g['margin'],
+                cohesion=g['cohesion'], votes=g['votes'], pull=g['pull'], margin=g['margin'],
                 held=g['held'], stem=nd['stem'], stem_shards=nd['stem_n'], spread=nd['spread'], spread_median=nd['spread_median'],
                 identity_min=ident[nd_i][0], identity_median=ident[nd_i][1],
                 nearest_id=G(node_at[k][near[2]]) if near else None, nearest_distance=near[0] if near else None,
@@ -377,7 +379,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                 built_group_at[lv['level']][t] = G(node_at[k][gi]) if gi >= 0 else None
             for g in lv['groups']:
                 tables['group_levels.tsv'].row(group_id=G(g['node']), level=lv['level'], cohesion=g['cohesion'], votes=g['votes'],
-                                               pull_max=g['pull_max'], margin=g['margin'], held=g['held'])
+                                               pull=g['pull'], margin=g['margin'], held=g['held'])
             for i, t in enumerate(tips):
                 gi = lv['group_of'][i]
                 p = lv['pull'][i]
