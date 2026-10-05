@@ -75,6 +75,44 @@ def cmd_build(a):
     cmd_hierarchy(a)
 
 
+def cmd_sparse_plan(a):
+    """Sparse shards for the large components among REGIONS (small ones need none: sparse-build
+    makes their layer from their local trees). Needs the corpus, for the outgroups: run where the
+    intake is."""
+    from . import sparse
+    from .fasta import read_fasta
+    large = []
+    for r in a.regions:
+        rd = Path(r)
+        if json.load(open(rd / 'region.json')).get('kind') == 'small':
+            continue
+        large.append(rd)
+    og = sparse.outgroups(large, a.intake, a.procs, log=_log)
+    corpus = read_fasta(Path(a.intake) / 'full.derep.fasta')
+    for rd in large:
+        h = json.load(open(rd / a.hierarchy))
+        k = sparse.plan(rd, h, og[rd.name], corpus)
+        _log(f'{rd.name}: {k} sparse shards' if k else f'{rd.name}: fewer than 3 units, no sparse shards')
+
+
+def cmd_sparse_build(a):
+    """The coarse layer of one region: from its planned sparse shards (trees built here), else from
+    its local trees (small components, and large ones with fewer than 3 units)."""
+    from . import sparse
+    rd = Path(a.region)
+    if (rd / 'sparse' / 'manifest.json').exists():
+        sparse.build(rd, a.procs, log=_log)
+        return
+    h = json.load(open(rd / a.hierarchy))
+    _, members = sparse.units(h)
+    if len(members) < 2:
+        (rd / 'sparse').mkdir(exist_ok=True)
+        sparse._write(rd / 'sparse' / 'layer.json', sparse.empty_layer(h))
+        _log(f'{rd.name}: one unit, empty layer')
+        return
+    sparse.build_local(rd, h, a.covers, a.procs, log=_log)
+
+
 def cmd_release(a):
     from . import export, regions
     if a.out == 'auto':
@@ -82,10 +120,17 @@ def cmd_release(a):
             raise SystemExit("OUT_DIR 'auto' needs --releases DIR")
         a.out = str(Path(a.releases) / export.next_name(a.releases, 'f'))
         _log(f'release name: {Path(a.out).name}')
+    from . import sparse
     comps = []
     for spec in a.components:
         rd, hj = spec.split('=', 1)
-        comps.append((rd, json.load(open(hj))))
+        h = json.load(open(hj))
+        if a.layer:
+            lj = Path(rd) / 'sparse' / 'layer.json'
+            if not lj.exists():
+                raise SystemExit(f'{rd}: --layer, but no sparse/layer.json (run sparse-plan / sparse-build)')
+            h = sparse.add_layer(h, json.load(open(lj)))
+        comps.append((rd, h))
     export.write_release(a.out, a.input, a.intake, comps, regions.components(a.intake, a.min_id), a.procs, log=_log,
                          settings={'component_min_id': a.min_id}, previous=a.previous, place_its2=not a.no_place_its2)
     if a.latest:
@@ -139,6 +184,12 @@ def main(argv=None):
     p.add_argument('--out', required=True)
     cover_args(p)
     hier_args(p)
+    p = add('sparse-plan', cmd_sparse_plan, 'intake')
+    p.add_argument('regions', nargs='+')
+    p.add_argument('--hierarchy', default='hierarchy.json', help="the fine hierarchy's file name in each region dir")
+    p = add('sparse-build', cmd_sparse_build, 'region')
+    p.add_argument('--hierarchy', default='hierarchy.json')
+    p.add_argument('--covers', default='covers')
     p = add('release', cmd_release, 'out')
     p.add_argument('--releases', help="with OUT_DIR 'auto': the releases directory; the release is named YYYYMMDD.NN + f")
     p.add_argument('--input', required=True, help='the input directory (its manifest.json is recorded)')
@@ -147,6 +198,8 @@ def main(argv=None):
     p.add_argument('--min-id', type=float, default=80.0, help='the centroid identity components were cut at')
     p.add_argument('--previous', help='the previous release directory, whose group ids (antenomina) are carried forward')
     p.add_argument('--latest', action='store_true', help="point <releases>/latest at this release")
+    p.add_argument('--layer', action='store_true',
+                   help="add each region's coarse layer (sparse/layer.json, from sparse-plan / sparse-build) above 0.1")
     p.add_argument('--no-place-its2', action='store_true',
                    help='skip ITS2-only placement (hours at scale on one machine); those inputs stay dropped:its2')
     a = ap.parse_args(argv)

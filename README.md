@@ -47,6 +47,14 @@ labels come back only as test cases.
 
 The shards support structure to about 0.075; coarser levels are relative.
 
+7. **Coarse layer** (`seqhesion/sparse.py`). Above 0.1, local shards rarely hold two distant
+   sequences. The units of the hierarchy at 0.1 (its groups, and lone sequences) get sparse
+   shards: one random member of each of 150 random units, plus an outgroup from outside the
+   component; ~24 shards per unit pair. Average linkage over unit-pair medians gives levels
+   0.125 ... 0.5, with the same evidence per group. Small components use their local trees, which
+   already hold every pair. `sparse-plan` (needs the corpus) and `sparse-build`, then
+   `release --layer`.
+
 ## Releases
 
 `python -m seqhesion release` writes a release: TSV tables and a JSON manifest (schema

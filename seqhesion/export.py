@@ -126,8 +126,10 @@ def pairwise_identity(seqs, threads=8):
 
 def identities(h, tips, seqs, threads=8, log=print):
     """Per node: (min, median) pairwise identity over its tips. Pairs are aligned within each
-    group of the coarsest level only; every node lies inside one of those."""
-    top = h['levels'][-1]
+    group of the coarsest FINE level only (a coarse level above it would mean all pairs of a whole
+    component); every fine node lies inside one of those, and a node born in the coarse layer
+    (sparse.add_layer) gets (None, None)."""
+    top = [lv for lv in h['levels'] if not lv.get('layer')][-1]
     node_of_top = {}
     res = {}
     for g in top['groups']:
@@ -138,8 +140,11 @@ def identities(h, tips, seqs, threads=8, log=print):
     top_of_tip = {t: g['node'] for g in top['groups'] for t in g['tips']}
     tips_of_node = collections.defaultdict(list)
     for lv in h['levels']:
+        if lv.get('layer'):
+            continue
         for g in lv['groups']:
             tips_of_node[g['node']] = g['tips']
+    res.update({k: (None, None) for k, nd in enumerate(h['nodes']) if nd.get('layer')})
     for node, tt in tips_of_node.items():
         ids, ident = node_of_top[top_of_tip[tt[0]]]
         names = sorted(tips[t] for t in tt)
@@ -358,14 +363,18 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
             for t in tt:
                 tables['group_members.tsv'].row(group_id=G(nd), tip_id=t)
         for nd_i, nd in enumerate(h['nodes']):
+            # measured at its coarsest fine level (kmax); a fine group still alone in the coarse
+            # layer continues up to kmax_top, where its parent is
             k = nd['kmax']
+            kt = nd.get('kmax_top', k)
             lv = h['levels'][k]
             g = next(x for x in lv['groups'] if x['node'] == nd_i)
-            parent = node_at[k + 1][g['parent']] if g['parent'] is not None else None
-            near, sec, v = nd['nearest'], nd['second'], nd['verdicts']
+            gt = next(x for x in h['levels'][kt]['groups'] if x['node'] == nd_i)
+            parent = node_at[kt + 1][gt['parent']] if gt['parent'] is not None else None
+            near, sec, v = nd['nearest'], nd['second'], nd['verdicts'] or [None] * 4
             tables['groups.tsv'].row(
                 group_id=G(nd_i), component=comp, n_tips=len(tips_of_node[nd_i]),
-                level_min=h['levels'][nd['kmin']]['level'], level_max=lv['level'],
+                level_min=h['levels'][nd['kmin']]['level'], level_max=h['levels'][kt]['level'],
                 parent_id=G(parent) if parent is not None else None,
                 cohesion=g['cohesion'], votes=g['votes'], pull=g['pull'], margin=g['margin'],
                 held=g['held'], stem=nd['stem'], stem_shards=nd['stem_n'], spread=nd['spread'], spread_median=nd['spread_median'],
