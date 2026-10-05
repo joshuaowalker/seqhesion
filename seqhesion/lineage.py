@@ -59,13 +59,21 @@ def match(new, old):
         for i in s & common:
             for o in by_input[i]:
                 ov[(k, o)] += 1
+    # inputs outside the comparison: on a tie in Jaccard, the candidate with fewer of them wins (a
+    # group and its parent can tie when the parent adds only inputs the other release holds in no
+    # group: 788 fine groups lost their ids to new coarse parents in 20261005.02f); then the
+    # lexically larger key, deterministically
+    extra_new = {k: len(s) - size_new[k] for k, s in new.items()}
+    extra_old = {k: len(s) - size_old[k] for k, s in old.items()}
     best_new, best_old = {}, {}
     for (k, o), c in ov.items():
         j = c / (size_new[k] + size_old[o] - c)
-        if (j, o) > best_new.get(k, (-1, '')):        # ties: the lexically larger key, deterministically
-            best_new[k] = (j, o)
-        if (j, k) > best_old.get(o, (-1, '')):
-            best_old[o] = (j, k)
+        if (j, -extra_old[o], o) > best_new.get(k, (-1, 0, '')):
+            best_new[k] = (j, -extra_old[o], o)
+        if (j, -extra_new[k], k) > best_old.get(o, (-1, 0, '')):
+            best_old[o] = (j, -extra_new[k], k)
+    best_new = {k: (j, o) for k, (j, _, o) in best_new.items()}
+    best_old = {o: (j, k) for o, (j, _, k) in best_old.items()}
     inherit = {k: o for k, (j, o) in best_new.items() if j > 0.5 and best_old[o][1] == k}
     rows = []
     for k, (j, o) in best_new.items():

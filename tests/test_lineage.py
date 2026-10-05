@@ -34,3 +34,12 @@ def test_minted_ids_are_reproducible_and_never_reused():
     assert len(a) == 9 and a[4] == '-'
     b = lineage.mint('fp', ['i1', 'i2'], {a})
     assert b != a and b.startswith(a.replace('-', '')[:4])
+
+
+def test_a_parent_adding_only_unshared_inputs_does_not_take_the_childs_id():
+    # the coarse parent adds input 'z', which the previous release held in no group: on the shared
+    # inputs both new groups equal the old one; the exact one keeps the id
+    old = {'OLD': {'a', 'b', 'c'}, 'OTHER': {'q', 'r'}}
+    new = {(0, 1): {'a', 'b', 'c'}, (0, 9): {'a', 'b', 'c', 'z'}, (0, 2): {'q', 'r'}}
+    inherit, _ = lineage.match(new, old)
+    assert inherit[(0, 1)] == 'OLD' and (0, 9) not in inherit
