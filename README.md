@@ -93,6 +93,12 @@ External tools, found on `PATH`: [vsearch](https://github.com/torognes/vsearch),
 `SEQHESION_MAFFT`, `SEQHESION_TRIMAL` or `SEQHESION_FASTTREE`. The shard-tree cache is keyed
 by each tool's version, so a different version builds new trees rather than reusing old ones.
 
+Alignment is nearly all of the compute. An optimised MAFFT 7.526 whose output is byte-identical to
+stock, about 5x faster on Apple silicon and on AVX-512 x86, is at
+[joshuaowalker/mafft](https://github.com/joshuaowalker/mafft) (branch `exact-speedups`, with a
+technical report in `paper/`). Check any build against stock on a sample of your own shards
+before relying on it.
+
 ## Use
 
 From a FASTA to a release (every command takes `--procs N`):

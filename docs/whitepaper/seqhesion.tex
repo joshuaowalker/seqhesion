@@ -581,11 +581,59 @@ tie resolution, and 8\% were sensitive. End to end this kept 98\% of antenomina,
 merely redrawing the covers, so the platform effect is below the method's own resampling noise.
 Alignments are shared across platforms. Trees are kept per platform.
 
-\paragraph{Scale.}
-Shard trees are independent and parallelise trivially. Production batches ran on AWS Batch, at
-about 1{,}670 trees per hour on a 4-vCPU c7a.xlarge instance with an optimised but output-identical
-MAFFT build, against about 600 per hour on an Apple M1 workstation. The cache holds about 560\,KB
-per tree.
+\paragraph{Compute and scale.}
+Almost all of the cost is shard trees, and almost all of a tree's cost is its L-INS-i alignment;
+FastTree takes about a second. Shards have a fixed size (150--210 sequences with the scaffold), so
+the cost of one tree is bounded and the number of trees grows linearly with the corpus. No step
+aligns or infers a tree over a whole component. A single L-INS-i alignment grows roughly with the
+cube of its size and already takes 36 minutes at 2{,}000 sequences on our hardware; the largest
+component holds 13{,}098 tips. Shard trees are independent, so they parallelise trivially.
+Table~\ref{tab:compute} counts the trees behind the current release.
+
+\begin{table}[t]
+\centering\small
+\caption{Shard trees behind release 20261006.01f.}
+\label{tab:compute}
+\begin{tabular}{@{}lrr@{}}
+\toprule
+Stage & Trees & Sequences per tree (median) \\
+\midrule
+Fine covers: shards & 36,386 & 158 \\
+\quad distinct trees (cross-cover twins built once) & 25,618 & \\
+Coarse layer: sparse trees & 3,119 & 22 \\
+Corpus layer: trees (one plan) & 2,677 & 170 \\
+\midrule
+Distinct trees in the release & 31,414 & \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Most trees were built on AWS Batch, on c7a.xlarge instances with four cores each. The fine covers
+took 23.1 instance-hours for 30,571 shards, the sparse trees 0.44, and the corpus trees 13.8 for two
+independent plans (the second served the stability check of Section~\ref{sec:res-corpus}). A corpus
+tree costs about three times as much as a fine shard (about 37 against 11 core-seconds), because its
+170 sequences are divergent. Scaled to every shard, a build from an empty cache takes about 35
+instance-hours, or 140 core-hours. That is about 3.4 core-seconds per tip, about 4.5 hours of wall
+time on eight instances, and under US\$10 of on-demand compute. The remaining steps run on one
+workstation: the hierarchy of the largest component (1{,}616 distinct trees) takes under five
+minutes, and writing the full release about 13 minutes. The cache holds about 560\,KB per tree.
+Because trees are cached by content, a later build only builds shards whose members changed.
+
+\paragraph{Optimised MAFFT.}
+Because alignment dominates, a faster MAFFT pays off directly. We used optimised builds of MAFFT
+7.526 that are required to give byte-identical output to stock MAFFT for our invocation, verified on
+canary sets of real shards before each was adopted. Their source and a technical report are public
+\citep{claude2026mafft}. On the Apple M1 workstation, the build used here runs L-INS-i 6.5 times
+faster than stock in a single run and 4.6 times faster with eight alignments at a time, the
+production setting. On AWS, a build that ports the vector kernels to AVX-512 runs 5.1--5.9 times
+faster than stock with four alignments at a time. Choosing c7a instances, with four physical cores,
+over c7i, with two hyperthreaded cores, gained a further factor of about 1.7 (16.0 against 26.9
+seconds per shard). With stock MAFFT the same build would have needed roughly five times the
+core-hours. Because the output is byte-identical, the optimised builds share the tree cache with
+stock MAFFT, and the choice of build never changes a result. The work behind them also found that
+stock MAFFT itself is not identical across platforms: whether the compiler fuses multiply-adds
+changed about a third of alignments, which is why the reference on Linux is a clang build with fused
+multiply-adds (see Cross-platform equivalence above).
 
 \paragraph{Releases.}
 A release is a set of TSV tables and a JSON manifest with a versioned schema (currently 0.5). It
