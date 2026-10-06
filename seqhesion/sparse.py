@@ -15,7 +15,7 @@ chains (lab: 5 groups at 0.2 in the 8,806-tip Cortinariaceae component). Here:
                linkage over observed unit pairs gives a hierarchy of units, cut at COARSE_LEVELS.
                Unit pairs, not tip pairs, are weighed equally: feeding the sparse votes into the
                tip-level hierarchy instead let the near pairs local shards hold dominate, and its
-               coarse levels chained (lab, experiments/seqhesion/merged_hierarchy.py)
+               coarse levels chained (lab experiment, 2026-10-05)
   evidence     per coarse group of 2+ units: cohesion, pull, margin over unit-pair votes, as the
                fine levels over tip-pair votes (`pooled`, `group_pull`); held = share of its unit
                pairs observed. A fine group that is still a single unit at a coarse level is the

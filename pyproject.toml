@@ -2,9 +2,23 @@
 name = "seqhesion"
 version = "0.1.0"
 description = "A label-blind hierarchy of sequence groups, built from many small overlapping trees"
+readme = "README.md"
 requires-python = ">=3.10"
 license = {text = "BSD-3-Clause"}
-dependencies = ["numpy", "scipy", "ete3"]
+authors = [{name = "Josh Walker"}]
+keywords = ["fungi", "ITS", "barcoding", "phylogenetics", "clustering", "bioinformatics"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = ["numpy", "scipy", "ete3", "pyitsx"]
+
+[project.urls]
+Homepage = "https://github.com/joshuaowalker/seqhesion"
 
 [project.optional-dependencies]
 test = ["pytest"]

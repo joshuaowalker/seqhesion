@@ -16,7 +16,7 @@ is used only to choose where to look):
 Diagnostic: whether the re-inference rearranged q's surroundings relative to the stored tree
 (collapsed trees: q's attachment, an edge or a polytomy, does not exist in the stored tree).
 
-Leave-one-out on 100 tips (lab, experiments/seqhesion/RESULTS.md, 2026-10-02): a tip's ITS2 alone
+Leave-one-out on 100 tips (lab experiment, 2026-10-02): a tip's ITS2 alone
 is assigned its own group 78-96% of the time across levels (vsearch identity placement: 53-97%);
 its full ITS, 96-99%.
 """

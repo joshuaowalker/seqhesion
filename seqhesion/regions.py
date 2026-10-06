@@ -2,7 +2,13 @@
 
 A region is a connected component of the centroid graph: 90% centroids of the dereplicated
 full-ITS set (`vsearch --cluster_fast`, used only to locate regions, never structurally), linked
-when two centroids match at >= min_id. Nothing is chosen or dropped by name.
+when two centroids match at >= min_id (default 86: at 80, most of the Agaricales falls into one
+component of ~60K sequences). Nothing is chosen or dropped by name.
+
+Region directories are named by their anchor (the tip with most copies), so a rebuild of a grown
+corpus finds the directories, and the cached trees, of components it has built before. A component
+of SHARD or more tips is LARGE; one of 2 to SHARD - 1 tips is SMALL (below); a lone tip gets no
+region.
 
 A region directory holds:
   comp.fasta             its sequences, most copies first
@@ -16,7 +22,7 @@ and its knn.tsv lists each tip's neighbours in the WHOLE corpus (vsearch floor S
 shards are seeded from its own tips but filled with their nearest sequences anywhere. Those outside
 sequences are rooting context only: pruned before co-association, never grouped. Built alone, such a
 component's shards hold all of it and its only rooting candidates are its own tips (lab
-experiments/seqhesion/small_components.py: 0% of its tips join another component's tips at levels
+experiment, 2026-10-03: 0% of its tips join another component's tips at levels
 <= 0.075, so pruning loses nothing). Its scaffold is the neighbourhood's 85% centroids.
 """
 import collections
@@ -57,7 +63,10 @@ def centroid_graph(intake_dir, threads=6):
         os.replace(f'{graph}.tmp', graph)
 
 
-def components(intake_dir, min_id=80.0):
+MIN_ID = 86.0
+
+
+def components(intake_dir, min_id=MIN_ID):
     """Every region: lists of sequence ids, largest first."""
     d = Path(intake_dir)
     members = collections.defaultdict(list)                     # centroid -> sequences
@@ -114,18 +123,30 @@ def make_region(seqs, sizes, out, threads=6, how=None):
                'knn': 'vsearch --usearch_global ' + ' '.join(KNN)}, open(out / 'region.json', 'w'), indent=1)
 
 
-def regions(intake_dir, out_dir, min_id=80.0, min_size=2, threads=6, log=print):
-    """Every region of 2+ sequences under out_dir/r0000, r0001, ... (largest first)."""
+def regions(intake_dir, out_dir, min_id=MIN_ID, threads=6, log=print):
+    """A region dir under out_dir for every component of 2+ tips, named by its anchor; existing
+    ones are kept. Writes out_dir/large.txt and small.txt (region dirs, largest component first)
+    and returns (large, small)."""
+    intake_dir, out_dir = Path(intake_dir), Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
     centroid_graph(intake_dir, threads)
-    seqs = read_fasta(Path(intake_dir) / 'full.derep.fasta')
+    seqs = read_fasta(intake_dir / 'full.derep.fasta')
     sizes = copies(intake_dir)
-    comps = components(intake_dir, min_id)
-    kept = [c for c in comps if len(c) >= min_size]
-    log(f'{len(comps)} regions; {len(kept)} of {min_size}+ sequences hold {sum(map(len, kept))} of {len(seqs)}')
-    for k, ids in enumerate(kept):
-        make_region({i: seqs[i] for i in ids}, sizes, Path(out_dir) / f'r{k:04d}', threads,
-                    how={'intake': str(intake_dir), 'min_id': min_id, 'component': k})
-    return kept
+    comps = components(intake_dir, min_id)                  # largest first
+    big = [c for c in comps if len(c) >= SHARD]
+    log(f'{len(comps)} components: {len(big)} large ({sum(map(len, big))} tips), '
+        f'{sum(1 for c in comps if 2 <= len(c) < SHARD)} small, {sum(1 for c in comps if len(c) == 1)} lone tips')
+    large = []
+    for ids in big:
+        rd = out_dir / min(ids, key=lambda t: (-sizes[t], t))
+        if not (rd / 'region.json').exists():
+            make_region({t: seqs[t] for t in ids}, sizes, rd, threads, how={'intake': str(intake_dir), 'min_id': min_id})
+            log(f'  made {rd.name}: {len(ids)} tips')
+        large.append(rd)
+    small = small_regions(intake_dir, comps, out_dir, threads, log=log)
+    for name, dirs in (('large.txt', large), ('small.txt', small)):
+        (out_dir / name).write_text(''.join(f'{d}\n' for d in dirs))
+    return large, small
 
 
 def small_regions(intake_dir, comps, out_dir, threads=6, log=print):

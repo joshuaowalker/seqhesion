@@ -332,7 +332,7 @@ def joins(line):
     holding them, since any union of a polytomy's children is compatible with it (a polytomy is
     missing information, not conflict -- Page 2002). With 'diameter' every pair in a polytomy
     joins at the polytomy's full width, which split near-identical tips between groups
-    (ubertree lab, experiments/coassoc/RESULTS.md, 2026-09-30).
+    (lab experiments, 2026-09-30).
     'identical': like 'compatible', but only for pairs whose span through the polytomy is below
     the data's resolution (one expected change = 1 / alignment width): indistinguishable tips join
     at their span, every other pair in a polytomy at its full width. 'compatible' groups the

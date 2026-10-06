@@ -1,12 +1,19 @@
 """seqhesion: a label-blind hierarchy of sequence groups from many small overlapping trees.
 
-  python -m seqhesion intake    INPUT.fasta INTAKE_DIR
-  python -m seqhesion regions   INTAKE_DIR REGIONS_DIR
-  python -m seqhesion cover     REGION_DIR [--covers covers] [--quota 30]
-  python -m seqhesion prepare   COVERS_DIR
-  python -m seqhesion hierarchy REGION_DIR [--covers covers] --out hierarchy.json
-  python -m seqhesion build     REGION_DIR [--covers covers] --out hierarchy.json   (cover + prepare + hierarchy)
-  python -m seqhesion release   OUT_DIR|auto [--releases DIR] --input INPUT_DIR --intake INTAKE_DIR REGION_DIR=HIERARCHY.json ...
+  seqhesion input        FASTA INPUT_DIR                 content-hash ids, names.tsv, manifest.json
+  seqhesion intake       INPUT_DIR/sequences.fasta INTAKE_DIR
+  seqhesion regions      INTAKE_DIR REGIONS_DIR          writes REGIONS_DIR/large.txt and small.txt
+  seqhesion build        REGION_DIR --out HIERARCHY.json  (= cover + prepare + hierarchy)
+  seqhesion cover        REGION_DIR
+  seqhesion prepare      REGION_DIR/covers
+  seqhesion hierarchy    REGION_DIR --out HIERARCHY.json
+  seqhesion sparse-plan  INTAKE_DIR REGION_DIR ...       coarse layer (levels 0.125 ...)
+  seqhesion sparse-build REGION_DIR
+  seqhesion corpus-plan  INTAKE_DIR CORPUS_DIR REGION_DIR ...   corpus levels (0.4, 0.5, 0.75)
+  seqhesion corpus-trees CORPUS_DIR [--chunk I --of N]
+  seqhesion corpus-layer CORPUS_DIR
+  seqhesion release      OUT_DIR|auto [--releases DIR] --input INPUT_DIR --intake INTAKE_DIR
+                         [--layer [--corpus CORPUS_DIR]] [--previous RELEASE] REGION_DIR=HIERARCHY.json ...
 """
 import argparse
 import json
@@ -16,6 +23,11 @@ from pathlib import Path
 
 def _log(msg):
     print(msg, flush=True)
+
+
+def cmd_input(a):
+    from . import inputs
+    inputs.prepare(a.fasta, a.out, log=_log)
 
 
 def cmd_intake(a):
@@ -180,9 +192,10 @@ def main(argv=None):
         p.set_defaults(fn=fn)
         return p
 
+    add('input', cmd_input, 'fasta', 'out')
     add('intake', cmd_intake, 'input', 'outdir')
-    p = add('regions', cmd_regions, 'intake', 'out')  # --min-id: identity (%) linking 90% centroids
-    p.add_argument('--min-id', type=float, default=80.0)
+    p = add('regions', cmd_regions, 'intake', 'out')
+    p.add_argument('--min-id', type=float, default=86.0, help='identity (%%) at which two 90%% centroids link components')
 
     def cover_args(p):
         # always two covers, drawn independently; the hierarchy pools them (cross-cover twins once)
@@ -229,7 +242,7 @@ def main(argv=None):
     p.add_argument('--input', required=True, help='the input directory (its manifest.json is recorded)')
     p.add_argument('--intake', required=True)
     p.add_argument('components', nargs='+', help='REGION_DIR=HIERARCHY.json')
-    p.add_argument('--min-id', type=float, default=80.0, help='the centroid identity components were cut at')
+    p.add_argument('--min-id', type=float, default=86.0, help='the centroid identity components were cut at (as for regions)')
     p.add_argument('--previous', help='the previous release directory, whose group ids (antenomina) are carried forward')
     p.add_argument('--latest', action='store_true', help="point <releases>/latest at this release")
     p.add_argument('--layer', action='store_true',

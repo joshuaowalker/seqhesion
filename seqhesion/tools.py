@@ -1,8 +1,8 @@
 """One shard tree: MAFFT L-INS-i -> trimAl -gappyout -> FastTree -gtr -gamma, cached.
 
-The recipe and its cache key are carried over unchanged from the ubertree lab, so trees built
-there are reused here and the reverse; `build_key` must fingerprint exactly as it did there
-(experiments/stitch/RESULTS.md in the lab has the verification of the MAFFT build).
+The recipe and its cache key are carried over unchanged from the research prototype (the lab) where
+the method was developed, so trees built there are reused here and the reverse; `build_key` must fingerprint
+exactly as it did there.
 """
 import os
 import platform
@@ -14,18 +14,19 @@ from pathlib import Path
 from . import cache
 from .fasta import read_fasta, write_fasta
 
-# Prefer the Apple-silicon build of MAFFT when it is installed: upstream 7.526 plus bit-exact
-# rewrites, verified byte-identical to stock on ~4,500 windows for this invocation (L-INS-i)
-# only. Stock and this build share one tree cache, on purpose: the key uses the upstream version
-# (mafft_key_version). The build began reporting `v7.526-opt4` on 2026-09-28; the 12-window canary
-# (lab: experiments/stitch/verify_mafft.py --largest) was byte-identical on 2026-09-30, so the
-# suffix names a build, not a different result. If a build ever diverges, key on the suffix and
-# rebuild on purpose. ~/mm/local/bin is deliberately not on PATH.
-_MAFFT_FAST = os.path.expanduser('~/mm/local/bin/mafft')
-MAFFT = _MAFFT_FAST if os.access(_MAFFT_FAST, os.X_OK) else (shutil.which('mafft') or '/opt/homebrew/bin/mafft')
-TRIMAL = shutil.which('trimal') or '/opt/homebrew/bin/trimal'
-_CONDA_BIN = os.path.expanduser('~/mm/analysis/phylogeny/conda-env/bin')
-FASTTREE = shutil.which('FastTree') or f'{_CONDA_BIN}/FastTree'
+# The tools are found on PATH, or named by SEQHESION_MAFFT / SEQHESION_TRIMAL / SEQHESION_FASTTREE
+# (e.g. a faster MAFFT build kept off PATH). A MAFFT build may share the tree cache with stock MAFFT
+# only if it gives byte-identical alignments for this invocation (L-INS-i): the key uses the
+# upstream version (mafft_key_version), so a build's version suffix names a build, not a different
+# result. Verify a build on a canary of real shards before pointing SEQHESION_MAFFT at it; if a
+# build ever diverges, key on the suffix and rebuild on purpose.
+def _tool(env, name):
+    return os.environ.get(env) or shutil.which(name) or name
+
+
+MAFFT = _tool('SEQHESION_MAFFT', 'mafft')
+TRIMAL = _tool('SEQHESION_TRIMAL', 'trimal')
+FASTTREE = _tool('SEQHESION_FASTTREE', 'FastTree')
 
 # Recorded on every tree as provenance, not part of the key (an OS upgrade was verified not to
 # change CPU MAFFT output; keying on it would invalidate every tree on every upgrade).

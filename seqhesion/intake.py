@@ -9,7 +9,7 @@ Tips: tip_id = the first 16 hex digits of sha256 of the extracted, oriented full
   sequence, so a tip's id is its content (collisions are checked, never assumed away).
 
   pyitsx delimit   region coordinates, strand, chimera flag (our own step, run on raw input)
-  classify         our completeness rule, not pyitsx's full_ITS span (ubertree lab, DESIGN.md §3.1):
+  classify         our completeness rule, not pyitsx's full_ITS span (set in the lab prototype):
                      full   ITS1 >= 50, 5.8S >= 140, ITS2 >= 50, and each flank either found
                             (SSU / LSU anchor) or, if missing, the region beside it >= 150
                             (about the 5th percentile of anchored ITS1/ITS2; Josh 2026-09-22:

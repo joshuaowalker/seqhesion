@@ -16,7 +16,7 @@ Components are cut apart at 86% centroid identity, so nothing relates them. Here
                linkage over observed unit pairs only (units nothing connects stay a forest), cut
                at LEVELS, with cohesion / pull / margin per group
 
-Lab basis (experiments/seqhesion/cross_shards.py, 2026-10-05): over 122 components near the main
+Lab basis (2026-10-05): over 122 components near the main
 Cortinariaceae, two independent draws agreed at 0.3-0.75 (ARI 0.90-0.98) and not at 1.0 (0.66);
 families (display only) came out as single nodes (best-node F1 0.96-0.97 vs 0.82 apart). So
 LEVELS stop at 0.75. A navigation aid, not a phylogeny. Labels play no part.

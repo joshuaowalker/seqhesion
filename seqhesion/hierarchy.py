@@ -11,7 +11,7 @@ The two covers are drawn independently, so dense neighbourhoods often give both 
 (55-61% of cover 1 over the Agaricales build); such a twin (`cover.twins`) is the same sample and
 the same tree, counted once. Until v6 the hierarchy used cover 0 alone and cover 1 'replicated'
 it; that one fixed split-half agreement was dropped: on 334 components it did not predict which
-groups survive resampling the shards, while the margin below did (lab, experiments/seqhesion).
+groups survive resampling the shards, while the margin below did (lab experiments, 2026-10-04).
 
 All shares are POOLED: every shard's verdict on a pair is one vote (`coassoc.pooled`).
 Per group and level:
