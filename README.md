@@ -156,7 +156,7 @@ Version 0.1. seqhesion is in production on a corpus of fungal ITS sequences draw
 MycoMap, with other sources: about 226,000 input sequences, 147,000 distinct full-ITS tips in
 4,172 components. The method was developed and validated in a separate research prototype
 (simulation, reproducibility between independent covers, resampling of shards). The draft white
-paper in [`docs/whitepaper`](docs/whitepaper) describes the method, its validation and its
+paper in [`docs/whitepaper`](https://github.com/joshuaowalker/seqhesion/tree/main/docs/whitepaper) describes the method, its validation and its
 limits, and is revised alongside the code.
 
 Not yet in the release: placement of ITS2-only sequences on the hierarchy. The code is in
