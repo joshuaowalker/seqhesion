@@ -676,8 +676,14 @@ Sparse trees per draw & 0.15 & 0.25 & 0.3 & 0.4 \\
 \paragraph{Sanity check against names.}
 For each genus in the component (the genera of the revised classification of
 \citet{liimatainen2022cortinariaceae}) we took the best-matching node at any height, by F1 over the
-tips whose current label names that genus (per-tip genus, subgenus, section and family names from the
-downstream curation pipeline's mapping \todo{one sentence on how that pipeline assigns a name to a tip}). Mean genus F1
+tips named in that genus. The names come from the downstream curation pipeline. Each record's
+standing name is read from the identifications made on it, with expert validators taking precedence
+over community identifications. Each clade of a cut of the fine hierarchy (levels $\le 0.1$) then
+takes the plurality name of its records. The genus, subgenus, section and family of that name are
+read from iNaturalist's taxonomy. These are validators' working names, about half of them provisional
+codes, not determinations. Because a tip's name is that of its fine-level clade, the check asks
+whether coarse nodes bring together the fine clades of one genus, not whether single tips agree.
+Mean genus F1
 was 0.91--0.92 with the sparse layer, against 0.82 with local shards alone. For example,
 \emph{Phlegmacium} rose from 0.78 to 0.97 and \emph{Calonarius} from 0.82 to 0.99. Genera formed at
 different heights (about 0.12--0.27), so no single cut reproduces them, which is consistent with
@@ -822,7 +828,16 @@ It requires Python $\ge$ 3.10, NumPy, SciPy and ETE~3, pyitsx \citep{walker2026p
 trimAl and FastTree.
 
 \section*{Acknowledgements}
-\todo{acknowledgements: data contributors, community barcoding programme, compute.}
+The sequences analysed here come mainly from MycoMap (its sequence pages, CSV export and API), whose
+records are mostly iNaturalist observations, plus MycoPortal and Mushroom Observer records;
+additional ITS sequences recorded on iNaturalist observations; and type sequences from GenBank. We thank the community scientists, sequencing laboratories and
+sequence validators whose vouchered collections and consensus sequences make up that corpus; the
+method exists to make their work easier to navigate.
+
+\paragraph{Author contributions.} J.W.\ conceived the project, set its principles and made the
+design decisions. Claude Code (Claude Opus 5.5, Anthropic) implemented the software, ran the
+experiments and drafted the text under J.W.'s direction. J.W.\ takes full responsibility for the
+content.
 
 \small
 \setlength{\bibsep}{2pt plus 1pt}
