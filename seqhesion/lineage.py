@@ -44,6 +44,15 @@ def mint(salt, inputs, taken, n=8):
         n += 1
 
 
+def _order(key):
+    """A total order on keys of mixed shapes (a release's keys are tuples mixing ints and strings, the
+    previous release's are ids): ints before strings at each position, so keys of one shape order
+    exactly as before."""
+    if isinstance(key, tuple):
+        return tuple((0, x) if isinstance(x, int) else (1, str(x)) for x in key)
+    return ((1, str(key)),)
+
+
 def match(new, old):
     """new, old: {key: set of inputs}. Returns (inherit {new key: old key}, rows), where rows hold
     every new group's best old match and every old group's best new match with their overlaps."""
@@ -68,12 +77,12 @@ def match(new, old):
     best_new, best_old = {}, {}
     for (k, o), c in ov.items():
         j = c / (size_new[k] + size_old[o] - c)
-        if (j, -extra_old[o], o) > best_new.get(k, (-1, 0, '')):
-            best_new[k] = (j, -extra_old[o], o)
-        if (j, -extra_new[k], k) > best_old.get(o, (-1, 0, '')):
-            best_old[o] = (j, -extra_new[k], k)
-    best_new = {k: (j, o) for k, (j, _, o) in best_new.items()}
-    best_old = {o: (j, k) for o, (j, _, k) in best_old.items()}
+        if (j, -extra_old[o], _order(o)) > best_new.get(k, (-1, 0, ()))[:3]:
+            best_new[k] = (j, -extra_old[o], _order(o), o)
+        if (j, -extra_new[k], _order(k)) > best_old.get(o, (-1, 0, ()))[:3]:
+            best_old[o] = (j, -extra_new[k], _order(k), k)
+    best_new = {k: (j, o) for k, (j, _, _, o) in best_new.items()}
+    best_old = {o: (j, k) for o, (j, _, _, k) in best_old.items()}
     inherit = {k: o for k, (j, o) in best_new.items() if j > 0.5 and best_old[o][1] == k}
     rows = []
     for k, (j, o) in best_new.items():

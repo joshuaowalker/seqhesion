@@ -43,3 +43,10 @@ def test_a_parent_adding_only_unshared_inputs_does_not_take_the_childs_id():
     new = {(0, 1): {'a', 'b', 'c'}, (0, 9): {'a', 'b', 'c', 'z'}, (0, 2): {'q', 'r'}}
     inherit, _ = lineage.match(new, old)
     assert inherit[(0, 1)] == 'OLD' and (0, 9) not in inherit
+
+
+def test_ties_between_keys_of_different_shapes_are_ordered():
+    # a group key (component, node), a stem-node key (component, 'S', j) and a corpus key ('C', i) tie
+    new = {(0, 1): {'a', 'b'}, (0, 'S', 0): {'a', 'b'}, ('C', 0): {'a', 'b'}}
+    inherit, _ = lineage.match(new, {'OLD-0001': {'a', 'b'}})
+    assert list(inherit.values()) == ['OLD-0001'] and len(inherit) == 1
