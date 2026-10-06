@@ -7,6 +7,7 @@
   seqhesion cover        REGION_DIR
   seqhesion prepare      REGION_DIR/covers
   seqhesion hierarchy    REGION_DIR --out HIERARCHY.json
+  seqhesion stem-nodes   REGION_DIR --hierarchy H.json --out H2.json   (stem nodes for an older hierarchy)
   seqhesion sparse-plan  INTAKE_DIR REGION_DIR ...       coarse layer (levels 0.125 ...)
   seqhesion sparse-build REGION_DIR
   seqhesion corpus-plan  INTAKE_DIR CORPUS_DIR REGION_DIR ...   corpus levels (0.4, 0.5, 0.75)
@@ -85,6 +86,18 @@ def cmd_build(a):
     cmd_cover(a)
     cmd_prepare(a)
     cmd_hierarchy(a)
+
+
+def cmd_stem_nodes(a):
+    """Add stem nodes to a hierarchy built before they existed (no tree is built)."""
+    from . import hierarchy
+    rd = Path(a.region)
+    h = json.load(open(rd / a.hierarchy))
+    hierarchy.add_stem_nodes(h, rd / a.covers, a.procs, log=_log)
+    tmp = Path(f'{a.out}.tmp')
+    json.dump(h, open(tmp, 'w'), separators=(',', ':'))
+    tmp.replace(a.out)
+    _log(f'wrote {a.out}')
 
 
 def cmd_sparse_plan(a):
@@ -222,6 +235,10 @@ def main(argv=None):
     p.add_argument('--out', required=True)
     cover_args(p)
     hier_args(p)
+    p = add('stem-nodes', cmd_stem_nodes, 'region')
+    p.add_argument('--hierarchy', default='hierarchy.json')
+    p.add_argument('--covers', default='covers')
+    p.add_argument('--out', required=True)
     p = add('sparse-plan', cmd_sparse_plan, 'intake')
     p.add_argument('regions', nargs='+')
     p.add_argument('--hierarchy', default='hierarchy.json', help="the fine hierarchy's file name in each region dir")

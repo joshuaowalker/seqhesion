@@ -461,6 +461,18 @@ the rest of its group) and its strongest outside pull. The design principle is t
 than threshold. No group is hidden for low confidence, and a partition into units is a view that a
 consumer derives from these annotations.
 
+\paragraph{Stem nodes.}
+Fixed levels miss a clade that lives wholly between two of them: in the current release a
+245-sequence clade of \emph{Trametes versicolor} exists only between heights 0.021 and 0.026, so the
+levels 0.02 and 0.03 see it as two groups and then as part of a larger one. Every node of the
+hierarchy below 0.1 that is a group at no level, but whose stem (its parent's height minus its own)
+is at least 0.001, is therefore reported as well, as a \emph{stem node} with the same cohesion,
+pull and margin, measured at a point inside its life. A longer minimum stem did not make these ids
+more stable: under bootstrap resampling of the shard trees, 75\% of stem-node ids carried over
+against 90\% of level groups', at thresholds from 0.001 to 0.0025. The current release has 17{,}557
+stem nodes beside about 56{,}000 groups; about half of them are clusters of near-identical sequences
+below the finest level.
+
 \subsection{The coarse layer within a component}\label{sec:coarse}
 
 Above about 0.1, neighbourhood shards rarely hold two distant tips, so coarse merges would rest on
@@ -636,7 +648,7 @@ changed about a third of alignments, which is why the reference on Linux is a cl
 multiply-adds (see Cross-platform equivalence above).
 
 \paragraph{Releases.}
-A release is a set of TSV tables and a JSON manifest with a versioned schema (currently 0.5). It
+A release is a set of TSV tables and a JSON manifest with a versioned schema (currently 0.6). It
 contains:
 \begin{itemize}
   \item every input and its status: built, not built, or dropped with its intake class;

@@ -41,6 +41,15 @@ Per distinct group (a node: the same tips over a run of levels), from the pooled
                 tip (so a subgroup is never a relative), and the second; gap = nearest / spread.
                 Ungrouped tips are reported apart: the nearest one, and how many sit closer.
 
+Stem nodes (adopted 2026-10-06, with mm-to-ref): a node of the linkage at height <= the top fine
+level that is not a group at any level (it lives between two levels) but whose linkage stem (its
+parent's height - its own) is >= STEM_MIN. A clade can live wholly between two levels (T. versicolor:
+0.021-0.026); such a node is reported with the same cohesion / pull / margin / held, measured at the
+largest GRID point below its parent's height (always inside its life, as STEM_MIN >= 2 GRID).
+Under bootstrap resampling of the shard trees, 75% of stem-node ids carried against 90% of level
+groups'; a longer stem bought no stability, so the threshold is the smallest the grid allows
+(lab experiment, 2026-10-06). No shard verdicts, spread, nearest or identity are computed for them.
+
 Labels play no part: tips are ids.
 """
 import collections
@@ -62,6 +71,8 @@ METHOD = ('co-association hierarchy: per pair, median over shards holding both o
           'margin = cohesion - pull (no replication); v7 (2026-10-04)')
 
 LEVELS = (0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075, 0.1)
+STEM_MIN = 0.001                 # a stem node's linkage stem is at least this
+GRID = 0.0005                    # stem nodes are measured at a multiple of this
 
 _W = {}
 
@@ -106,6 +117,87 @@ def cut(Z, level):
     return np.array([gid.get(g, -1) for g in p.tolist()])
 
 
+def linkage_nodes(Z, n, top):
+    """[(row, tip indices, height, parent height)] for every row of linkage Z at height <= top
+    (rows of height None / inf join forest parts; a missing parent is inf)."""
+    h = [np.inf if r[2] is None or not np.isfinite(r[2]) else float(r[2]) for r in Z]
+    parent_h = [np.inf] * len(Z)
+    for r, row in enumerate(Z):
+        for c in (int(row[0]), int(row[1])):
+            if c >= n:
+                parent_h[c - n] = h[r]
+    members, out = {}, []
+    for r, row in enumerate(Z):
+        a, b = int(row[0]), int(row[1])
+        s = (members.pop(a) if a >= n else [a]) + (members.pop(b) if b >= n else [b])
+        members[n + r] = s
+        if h[r] <= top:
+            out.append((r, sorted(s), h[r], parent_h[r]))
+    return out
+
+
+def stem_nodes(Z, n, kv, levels, stem_min=STEM_MIN):
+    """The stem nodes of linkage Z (see the module docstring), each measured like a group: a list of
+    {tips, height, top, measured_at, cohesion, votes, pull, margin, held}, tips as indices. kv: the
+    per-shard join levels (consensus_levels' fourth value)."""
+    assert stem_min >= 2 * GRID
+    top_level = max(levels)
+    at = collections.defaultdict(list)
+    for _, s, ht, ph in linkage_nodes(Z, n, top_level):
+        if ph - ht >= stem_min and not any(ht <= L < ph for L in levels):
+            g = round(float(np.floor((ph - 1e-12) / GRID) * GRID), 6)
+            assert ht <= g < ph, (ht, ph, g)
+            at[g].append((s, ht, ph))
+    Zf = np.array([[r[0], r[1], np.inf if r[2] is None else r[2], r[3]] for r in Z], float)
+    out = []
+    for g, todo in sorted(at.items()):
+        group_of = cut(Zf, g)
+        G = int(group_of.max()) + 1
+        s0 = pooled(*votes_at(*kv, g), n, group_of)
+        pull = group_pull(s0, group_of, G)
+        for s, ht, ph in todo:
+            k = int(group_of[s[0]])
+            assert k >= 0 and np.flatnonzero(group_of == k).tolist() == s, ('stem node is not a group at', g)
+            coh = rnd(s0['cohesion'][k])
+            out.append({'tips': s, 'height': round(ht, 6), 'top': round(ph, 6), 'measured_at': g, 'cohesion': coh,
+                        'votes': int(s0['c_votes'][k]), 'pull': rnd(pull[k]),
+                        'margin': rnd(coh - pull[k]) if coh is not None else None,
+                        'held': round(float(s0['c_pairs'][k] / (len(s) * (len(s) - 1) // 2)), 3)})
+    return out
+
+
+def pooled_trees(cd):
+    """(manifest, cover-1 twins, shard names, tree lines, trimmed widths): every distinct prepared
+    shard tree of both covers, a cover-1 twin of a cover-0 shard counted once."""
+    man = json.load(open(cd / 'manifest.json'))
+    skip = cover.twins(man)
+    shard_names, lines, width = [], [], []
+    for c in (0, 1):
+        for name, line, w in zip(*shardtrees.read(cd, c)):
+            if name not in skip:
+                shard_names.append(name)
+                lines.append(line)
+                width.append(w)
+    return man, skip, shard_names, lines, width
+
+
+def add_stem_nodes(h, covers_dir, procs=8, log=print):
+    """Stem nodes for a hierarchy built before they existed: the pooled join levels are recomputed
+    from the stored shard trees (no tree is built) and must reproduce its linkage."""
+    tips = [t['id'] for t in h['tips']]
+    n, index = len(tips), {t: i for i, t in enumerate(tips)}
+    _, _, _, lines, width = pooled_trees(Path(covers_dir))
+    keys, med, _, kv = consensus_levels(lines, width, index, procs, h['join'])
+    Z = hierarchy(keys, med, n)[0]
+    same = lambda A: {tuple(s) for _, s, *_ in linkage_nodes(A, n, np.inf)}  # noqa: E731
+    assert same([[r[0], r[1], None if not np.isfinite(r[2]) else r[2], r[3]] for r in Z]) == same(h['linkage']['Z']), \
+        'the stored shard trees do not reproduce this hierarchy'
+    h['stem_nodes'] = stem_nodes(h['linkage']['Z'], n, kv, [lv['level'] for lv in h['levels']])
+    h['stem_min'] = STEM_MIN
+    log(f'{len(h["stem_nodes"])} stem nodes')
+    return h
+
+
 def build(covers_dir, tips, levels=LEVELS, join='identical', procs=8, log=print):
     """The hierarchy over `tips` (ids, in index order) from a covers directory whose shard trees
     have been prepared (`shardtrees.export`, both covers), pooled: every distinct shard tree of both
@@ -117,15 +209,7 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', procs=8, log=print)
     n = len(tips)
     index = {t: i for i, t in enumerate(tips)}
 
-    man = json.load(open(cd / 'manifest.json'))
-    skip = cover.twins(man)
-    shard_names, lines, width = [], [], []
-    for c in (0, 1):
-        for name, line, w in zip(*shardtrees.read(cd, c)):
-            if name not in skip:
-                shard_names.append(name)
-                lines.append(line)
-                width.append(w)
+    man, skip, shard_names, lines, width = pooled_trees(cd)
     keys, med, _, kv = consensus_levels(lines, width, index, procs, join)
     Z, observed, possible = hierarchy(keys, med, n)
     log(f'{len(lines)} distinct shard trees (both covers; {len(skip)} cover-1 twins counted once): '
@@ -230,8 +314,13 @@ def build(covers_dir, tips, levels=LEVELS, join='identical', procs=8, log=print)
         })
         del nd['tips']
 
+    Zj = [[int(r[0]), int(r[1]), (None if not np.isfinite(r[2]) else float(r[2])), int(r[3])] for r in Z]
+    stems = stem_nodes(Zj, n, kv, levels)
+    log(f'{len(stems)} stem nodes')
+
     return {
         'method': METHOD, 'covers': 'pooled', 'twins': len(skip), 'join': join,
+        'stem_nodes': stems, 'stem_min': STEM_MIN,
         'provenance': provenance.hierarchy_key(cd, METHOD, {'levels': levels, 'join': join, 'distance': 'patristic median'}),
         'verdicts': list(VERDICTS), 'shards': shard_names, 'distance_floor': round(floor, 5),
         'forest': sorted(part_size.values(), reverse=True),

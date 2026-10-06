@@ -66,6 +66,10 @@ relationships.
 
    Each group also carries its stem length, spread, nearest outside group, and every shard's
    verdict on it (clade, unresolved or conflict).
+
+   A clade can also live wholly between two levels. Every node of the hierarchy below 0.1 that is
+   a group at no level, but whose stem (its parent's height minus its own) is at least 0.001, is
+   reported too, as a *stem node* with the same cohesion, pull and margin.
 8. **Coarse layer** (levels 0.125 … 0.3). Local shards rarely hold two distant sequences, so the
    groups at 0.1 (and lone tips) become *units*. Stratified sparse shards then sample them: one
    random member from each of 150 random units, plus an outgroup from outside the component,
@@ -138,10 +142,10 @@ A release directory holds:
 
 | file | contents |
 | --- | --- |
-| `manifest.json` | schema (`seqhesion-release/0.5`), seqhesion commit, input fingerprint, method, levels, counts, and the columns of every table |
+| `manifest.json` | schema (`seqhesion-release/0.6`), seqhesion commit, input fingerprint, method, levels, counts, and the columns of every table |
 | `inputs.tsv` | every input: its tip, and whether it was built, not built, or dropped (with its intake class) |
 | `tips.tsv`, `tips.fasta` | every tip of a built component, with its extracted, oriented full-ITS sequence |
-| `groups.tsv` | one row per distinct group: size, level range, parent, cohesion, pull, margin, stem, spread, nearest group, shard verdicts |
+| `groups.tsv` | one row per distinct group or stem node: size, level range, parent, cohesion, pull, margin, stem, spread, nearest group, shard verdicts, and its node in the dendrogram |
 | `group_levels.tsv`, `group_members.tsv` | a group's evidence at each level; its tips |
 | `membership.tsv` | per tip and level: its group, how firmly it belongs, its strongest outside pull |
 | `lineage.tsv`, `minted.tsv` | how each group id relates to the previous release; every id ever minted |
