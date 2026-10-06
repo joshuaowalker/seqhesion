@@ -148,6 +148,27 @@ links taxa only when some input tree holds both, so a pair never seen together i
 produce a single resolved tree, only a hierarchy of groups with their evidence. It also never merges
 trees: it pools what each tree says about pairs.
 
+\paragraph{Distance-based supertrees and fit to the input trees.}
+The closest relatives of \seqhesion{} are the distance-based supertree methods. Average Consensus
+\citep{lapointe1997average} turns each input tree into path-length distances between its taxa,
+averages the matrices, and fits one tree to the average. SDM \citep{criscuolo2006sdm} first
+rescales the input matrices to a common scale, so that trees built on different data can be
+averaged. \seqhesion{} also summarises each pair over the trees that hold it, but differs in
+three ways. Its summary is the median, over those trees, of the diameter of the smallest clade
+holding both tips: a level, robust to a minority of discordant trees, rather than a mean of
+path lengths. Pairs no tree holds are left out of the linkage altogether. And the
+result is a hierarchy of groups with their evidence, not one resolved tree.
+
+How far a combined tree departs from its inputs is often measured by the Robinson--Foulds (RF)
+distance \citep{robinson1981comparison}: the number of clades found in one tree but not the other.
+RF supertrees \citep{bansal2010rfsupertrees} minimise its total over the input trees. As an objective
+it does not suit this setting. It weighs every clade equally, so the many shallow splits that differ
+by chance between shards dominate it; it counts a polytomy as disagreement; and it yields no levels.
+As a measure of fit, \seqhesion{} keeps a refined form of it. Each group's per-shard verdicts
+(Section~\ref{sec:evidence}) say whether a shard has the same clade, leaves it unresolved, or
+contradicts it. A shard's conflicts, summed over the groups among its tips, approximate its RF
+distance to the hierarchy without counting a lack of resolution as conflict.
+
 \paragraph{Consensus clustering.}
 The co-association matrix of evidence-accumulation clustering \citep{fred2005evidence} records, for
 each pair of objects, how often many base clusterings put them together. Hierarchical clustering of
