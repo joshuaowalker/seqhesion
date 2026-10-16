@@ -169,9 +169,9 @@ def _write(path, obj):
     Path(f'{path}.tmp').replace(path)
 
 
-def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print, levels=COARSE_LEVELS):
-    """The layer over units from prepared shard trees: unit-pair medians of every vote on a tip
-    pair spanning two units, average linkage over observed unit pairs, cut at COARSE_LEVELS."""
+def unit_pairs(lines, widths, tips, unit, join='identical', procs=8):
+    """Every vote on a tip pair spanning two units, by unit pair: (UK unit-pair keys a*U+b, a<b,
+    sorted; UV their join levels, sorted within a key)."""
     n, U = len(tips), int(unit.max()) + 1
     index = {t: i for i, t in enumerate(tips)}
     KK, VV = consensus_levels(lines, widths, index, procs, join)[3]
@@ -180,12 +180,29 @@ def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print,
     UK = np.minimum(ui, uj)[keep].astype(np.int64) * U + np.maximum(ui, uj)[keep]
     UV = VV[keep]
     order = np.lexsort((UV, UK))
-    UK, UV = UK[order], UV[order]
+    return UK[order], UV[order]
+
+
+def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print, levels=COARSE_LEVELS, min_votes=0):
+    """The layer over units from prepared shard trees: unit-pair medians of every vote on a tip
+    pair spanning two units, average linkage over observed unit pairs, cut at `levels`. A unit pair
+    on fewer than `min_votes` votes counts as unobserved (the corpus layer's backstop against joins
+    resting on one or two trees). Each merge records the votes on the observed cross pairs behind
+    it (`votes`)."""
+    U = int(unit.max()) + 1
+    UK, UV = unit_pairs(lines, widths, tips, unit, join, procs)
     starts = np.flatnonzero(np.r_[True, UK[1:] != UK[:-1]])
     counts = np.diff(np.r_[starts, len(UK)])
+    dropped = 0
+    if min_votes > 1:                               # thin pairs count as unobserved, in every measure
+        thin = np.repeat(counts < min_votes, counts)
+        dropped = int((counts < min_votes).sum())
+        UK, UV = UK[~thin], UV[~thin]
+        starts = np.flatnonzero(np.r_[True, UK[1:] != UK[:-1]]) if len(UK) else np.array([], np.int64)
+        counts = np.diff(np.r_[starts, len(UK)])
     ukeys = UK[starts]
     umed = (UV[starts + (counts - 1) // 2] + UV[starts + counts // 2]) / 2
-    Z, observed, possible = linkage(ukeys, umed, U)
+    Z, observed, possible, mvotes = linkage(ukeys, umed, U, counts)
     out_levels = []
     for L in levels:
         cg = cut(Z, L)
@@ -205,13 +222,16 @@ def build_layer(lines, widths, tips, unit, join='identical', procs=8, log=print,
                      for v, g, pv, pt in zip(st['pull'], st['p_group'], st['p_votes'], st['p_tip'])]
         out_levels.append({'level': L, 'unit_group': cg.tolist(), 'groups': groups, 'unit_pull': unit_pull,
                        'unit_membership': [rnd(x) for x in st['membership']], 'unit_m_votes': st['m_votes'].tolist()})
-    log(f'layer: {U} units, {len(ukeys)} unit pairs observed ({len(ukeys) / max(1, U * (U - 1) // 2):.1%}), '
+    log(f'layer: {U} units, {len(ukeys)} unit pairs observed ({len(ukeys) / max(1, U * (U - 1) // 2):.1%}'
+        + (f'; {dropped} on < {min_votes} votes left out' if min_votes > 1 else '') + '), '
         f'median {int(np.median(counts)) if len(counts) else 0} votes; groups of 2+ units per level '
         + ', '.join(f'{lv["level"]}: {len(lv["groups"])}' for lv in out_levels))
     return {'method': METHOD, 'unit_level': UNIT_LEVEL, 'units': U, 'unit_of_tip': unit.tolist(),
             'unit_pairs_observed': len(ukeys), 'unit_pairs': U * (U - 1) // 2,
+            'min_votes': min_votes, 'unit_pairs_below_min_votes': dropped,
             'linkage': [[int(r[0]), int(r[1]), None if not np.isfinite(r[2]) else float(r[2]), int(r[3])] for r in Z],
             'observed': [int(x) for x in observed], 'possible': [int(x) for x in possible],
+            'votes': [int(x) for x in mvotes],
             'levels': out_levels}
 
 
@@ -312,11 +332,13 @@ def combined_linkage(fine, layer, n, max_level=None):
     """The dendrogram every level is cut from: the fine linkage inside each unit (its subtree),
     the layer's linkage over units above them. A layer merge never sits below its children, nor at
     or below UNIT_LEVEL (it joins units the fine hierarchy keeps apart there): such heights are
-    raised to just above it. Merge rows' observed / possible count unit pairs above the units."""
+    raised to just above it. Merge rows' observed / possible count unit pairs above the units;
+    `votes` holds a layer row's votes (the votes on its observed unit pairs), None on fine rows."""
     unit = layer['unit_of_tip']
     Z, obs, pos = fine['Z'], fine['observed'], fine['possible']
     size_unit = collections.Counter(unit)
-    rows, robs, rpos = [], [], []
+    rows, robs, rpos, rvotes = [], [], [], []
+    lvotes = layer.get('votes') or [None] * len(layer['linkage'])
     new_id, height, unit_of_node = {}, {}, {}
     for i in range(n):
         new_id[i], height[i], unit_of_node[i] = i, 0.0, unit[i]
@@ -333,6 +355,7 @@ def combined_linkage(fine, layer, n, max_level=None):
         rows.append([new_id[a], new_id[b], ht, count[a] + count[b]])
         robs.append(obs[r])
         rpos.append(pos[r])
+        rvotes.append(None)
         new_id[n + r], height[k], count[n + r] = k, ht or 0.0, count[a] + count[b]
         if count[n + r] == size_unit[ua]:
             root_of_unit[ua] = k
@@ -350,9 +373,10 @@ def combined_linkage(fine, layer, n, max_level=None):
         rows.append([na, nb, h_, size[na] + size[nb]])
         robs.append(layer['observed'][r])
         rpos.append(layer['possible'][r])
+        rvotes.append(lvotes[r])
         node[U + r], size[k], hgt[k] = k, size[na] + size[nb], (h_ if h_ is not None else max(hgt[na], hgt[nb]))
     assert len(rows) == n - 1 or not layer['linkage'], 'combined linkage is not a full tree'
-    return {'Z': rows, 'observed': robs, 'possible': rpos}
+    return {'Z': rows, 'observed': robs, 'possible': rpos, 'votes': rvotes}
 
 
 def _node_tips(h):

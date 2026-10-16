@@ -38,6 +38,14 @@ m<row>, in dendrogram/corpus.nwk when the release has corpus levels, else in den
 parent_id is the nearest enclosing group OR node. Stem-node ids carry across releases by the same
 lineage rule as every group.
 
+0.7 (2026-10-16): WEAKEST LINK. groups.tsv gains join_votes (the votes on the observed unit pairs
+behind the merge that forms the group: a coarse- or corpus-layer merge; empty for a group formed by a
+fine merge) and weakest_votes (the fewest votes on any layer merge in its subtree: a group whose
+subtree holds a merge seen by one or two trees is only as good as that merge, whatever its cohesion,
+which pools every vote in the group). dendrogram/*.merges.tsv gains votes (layer rows only). The
+corpus layer is verified (seqhesion.corpus: thin merges get more shards with random context) and
+counts a unit pair on fewer than 3 votes as unobserved.
+
   manifest.json    schema, seqhesion commit, the input (directory + fingerprint), method, levels,
                    components built, counts, and the columns of every table
   inputs.tsv       input_id, tip_id, status, component
@@ -76,7 +84,8 @@ Tree data (schema 0.1, for drawing and on-demand distances; see the release mani
   dendrogram/<component>.nwk          the average-linkage dendrogram the levels are cut from: one
                                       Newick line per forest part, internal nodes m<row>,
                                       branch lengths = height differences (ultrametric)
-  dendrogram/<component>.merges.tsv   row, height, size, observed, possible (cross pairs behind it)
+  dendrogram/<component>.merges.tsv   row, height, size, observed, possible (cross pairs behind it),
+                                      votes (layer rows: the votes on those observed pairs)
   shards/<component>/cover<c>.nwk.gz  the prepared shard trees as the hierarchy reads them, one per line
   shards/<component>/cover<c>.shards.tsv  shard, members held, branches collapsed, trimmed width,
                                       twin_of (cover 1: the cover-0 shard with the same members, so the
@@ -102,7 +111,7 @@ import numpy as np
 from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
-SCHEMA = 'seqhesion-release/0.6'
+SCHEMA = 'seqhesion-release/0.7'
 COLUMNS = {
     'inputs.tsv': ['input_id', 'tip_id', 'status', 'component'],
     'tips.tsv': ['tip_id', 'component', 'n_inputs', 'seen', 'part'],
@@ -110,7 +119,8 @@ COLUMNS = {
                    'pull', 'margin', 'held', 'stem', 'stem_shards', 'spread', 'spread_median',
                    'identity_min', 'identity_median', 'nearest_id', 'nearest_distance', 'second_id', 'second_distance',
                    'gap', 'clade', 'unresolved', 'conflict', 'whole',
-                   'kind', 'height', 'height_top', 'linkage_stem', 'measured_at', 'dendrogram_node'],
+                   'kind', 'height', 'height_top', 'linkage_stem', 'measured_at', 'dendrogram_node',
+                   'join_votes', 'weakest_votes'],
     'group_levels.tsv': ['group_id', 'level', 'cohesion', 'votes', 'pull', 'margin', 'held'],
     'group_members.tsv': ['group_id', 'tip_id'],
     'lineage.tsv': ['event', 'group_id', 'previous_id', 'jaccard', 'shared', 'new_common', 'old_common'],
@@ -128,7 +138,7 @@ def _fmt(x):
     return str(x)
 
 
-NODE_COLUMNS = ('kind', 'height', 'height_top', 'linkage_stem', 'measured_at', 'dendrogram_node')
+NODE_COLUMNS = ('kind', 'height', 'height_top', 'linkage_stem', 'measured_at', 'dendrogram_node', 'join_votes', 'weakest_votes')
 
 
 class Table:
@@ -180,14 +190,20 @@ def node_columns(rows, tips_of, trees):
         height = [0.0] * n + [r[2] for r in Z]
         for r, row in enumerate(Z):
             parent[int(row[0])] = parent[int(row[1])] = n + r
-        info.append((n, parent, size, height))
+        votes = list(link.get('votes') or [None] * len(Z))
+        weakest = [None] * len(Z)                  # fewest votes on any layer merge at or below each row
+        for r, row in enumerate(Z):
+            w = [votes[r]] + [weakest[int(c) - n] for c in row[:2] if int(c) >= n]
+            w = [x for x in w if x is not None]
+            weakest[r] = min(w) if w else None
+        info.append((n, parent, size, height, votes, weakest))
         for i, t in enumerate(order):
             where[t] = (ti, i)
     item = {}
     for r in rows:
         tips = tips_of[r['group_id']]
         ti, x = where[tips[0]]
-        n, parent, size, height = info[ti]
+        n, parent, size, height, _, _ = info[ti]
         while size[x] < len(tips):
             x = parent[x]
         assert size[x] == len(tips) and x >= n, (r['group_id'], 'is not a node of the dendrogram')
@@ -196,8 +212,9 @@ def node_columns(rows, tips_of, trees):
     kinds = {r['group_id']: r['kind'] for r in rows}
     for r in rows:
         ti, x = r['_node']
-        n, parent, size, height = info[ti]
+        n, parent, size, height, votes, weakest = info[ti]
         p = parent[x]
+        r['join_votes'], r['weakest_votes'] = votes[x - n], weakest[x - n]
         r['dendrogram_node'] = f'm{x - n}'
         r['height'] = height[x]
         r['height_top'] = height[p] if p is not None else None
@@ -348,7 +365,9 @@ def dendrogram(linkage, tips):
                 lab = f'm{node - n}'
                 txt.append(f'){lab}' + (f':{blen(node):.6g}' if node != r else ''))
         lines.append(''.join(txt) + ';')
-    rows = [{'row': k, 'height': h, 'size': size, 'observed': obs[k], 'possible': pos[k]} for k, (a, b, h, size) in enumerate(Z)]
+    vts = linkage.get('votes') or [None] * len(Z)
+    rows = [{'row': k, 'height': h, 'size': size, 'observed': obs[k], 'possible': pos[k], 'votes': vts[k]}
+            for k, (a, b, h, size) in enumerate(Z)]
     return lines, rows
 
 
@@ -385,9 +404,9 @@ def write_corpus(out, cx, tables, gid, built_comps, built_group_at, log=print):
     dd.mkdir(exist_ok=True)
     (dd / 'corpus.nwk').write_text('\n'.join(lines) + '\n')
     with open(dd / 'corpus.merges.tsv', 'w') as f:
-        f.write('row\theight\tsize\tobserved\tpossible\n')
+        f.write('row\theight\tsize\tobserved\tpossible\tvotes\n')
         for r in rows:
-            f.write(f"{r['row']}\t{_fmt(r['height'])}\t{r['size']}\t{r['observed']}\t{r['possible']}\n")
+            f.write(f"{r['row']}\t{_fmt(r['height'])}\t{r['size']}\t{r['observed']}\t{r['possible']}\t{_fmt(r['votes'])}\n")
     log(f'corpus: {len(cx["nodes"])} groups, dendrogram/corpus.nwk {len(lines)} part(s) over {len(order)} tips')
 
 
@@ -402,9 +421,9 @@ def write_tree_data(out, comp, region_dir, h, tips, covers='covers'):
         lines, rows = dendrogram(h['linkage'], tips)
         (dd / f'{comp}.nwk').write_text('\n'.join(lines) + '\n')
         with open(dd / f'{comp}.merges.tsv', 'w') as f:
-            f.write('row\theight\tsize\tobserved\tpossible\n')
+            f.write('row\theight\tsize\tobserved\tpossible\tvotes\n')
             for r in rows:
-                f.write(f"{r['row']}\t{_fmt(r['height'])}\t{r['size']}\t{r['observed']}\t{r['possible']}\n")
+                f.write(f"{r['row']}\t{_fmt(r['height'])}\t{r['size']}\t{r['observed']}\t{r['possible']}\t{_fmt(r['votes'])}\n")
     sd = out / 'shards' / comp
     sd.mkdir(parents=True, exist_ok=True)
     cd = Path(region_dir) / covers

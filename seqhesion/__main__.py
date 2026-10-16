@@ -13,6 +13,7 @@
   seqhesion corpus-plan  INTAKE_DIR CORPUS_DIR REGION_DIR ...   corpus levels (0.4, 0.5, 0.75)
   seqhesion corpus-trees CORPUS_DIR [--chunk I --of N]
   seqhesion corpus-layer CORPUS_DIR
+  seqhesion corpus-verify CORPUS_DIR --round R     then corpus-trees --round R, corpus-layer; repeat
   seqhesion release      OUT_DIR|auto [--releases DIR] --input INPUT_DIR --intake INTAKE_DIR
                          [--layer [--corpus CORPUS_DIR]] [--previous RELEASE] REGION_DIR=HIERARCHY.json ...
 """
@@ -145,9 +146,18 @@ def cmd_corpus_plan(a):
 
 
 def cmd_corpus_trees(a):
-    """Corpus levels, step 2: the trees of one chunk of the plan (chunks are independent: AWS array)."""
+    """Corpus levels, step 2: the trees of one chunk of the plan (chunks are independent: AWS array);
+    with --round, only that verification round's shards."""
     from . import corpus
-    corpus.trees(a.out, a.chunk, a.of, a.procs, log=_log)
+    corpus.trees(a.out, a.chunk, a.of, a.procs, log=_log, round_=a.round)
+
+
+def cmd_corpus_verify(a):
+    """Corpus levels, verification round R: shards for every merge resting on too few votes, appended
+    to the plan; then corpus-trees --round R and corpus-layer. Exit status 3 when nothing is thin."""
+    from . import corpus
+    if corpus.verify(a.out, a.round, a.procs, log=_log, intake_dir=a.intake) == 0:
+        raise SystemExit(3)
 
 
 def cmd_corpus_layer(a):
@@ -253,6 +263,10 @@ def main(argv=None):
     p = add('corpus-trees', cmd_corpus_trees, 'out')
     p.add_argument('--chunk', type=int, default=0)
     p.add_argument('--of', type=int, default=1)
+    p.add_argument('--round', type=int, help='only the shards of this verification round')
+    p = add('corpus-verify', cmd_corpus_verify, 'out')
+    p.add_argument('--round', type=int, required=True)
+    p.add_argument('--intake', help="the intake dir, when the plan does not record it (plans before 2026-10-16)")
     add('corpus-layer', cmd_corpus_layer, 'out')
     p = add('release', cmd_release, 'out')
     p.add_argument('--releases', help="with OUT_DIR 'auto': the releases directory; the release is named YYYYMMDD.NN + f")

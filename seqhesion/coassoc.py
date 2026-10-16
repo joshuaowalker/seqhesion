@@ -20,9 +20,10 @@ import numpy as np
 UNJOINED = np.inf   # height of the rows that join clusters no observed pair connects
 
 
-def observed_average_linkage(i, j, d, n):
+def observed_average_linkage(i, j, d, n, w=None):
     """Average linkage over the observed pairs (i[k], j[k]) at distance d[k]; 0 <= i < j < n, each
-    pair at most once. Returns (Z, observed, possible):
+    pair at most once. Returns (Z, observed, possible), and with weights w (e.g. each pair's votes)
+    also `weight`, per row the summed weights of the observed cross pairs behind the merge:
       Z         scipy-format linkage, n-1 rows; the rows joining parts of a forest (no observed pair
                 between them) come last, at height UNJOINED, largest part first
       observed  per row, observed cross pairs behind the merge (0 for UNJOINED rows)
@@ -30,19 +31,20 @@ def observed_average_linkage(i, j, d, n):
     Ties are broken by the lower slot index, so the result depends only on the input pairs, not
     their order."""
     i, j, d = np.asarray(i, np.int64), np.asarray(j, np.int64), np.asarray(d, np.float64)
+    wt = np.ones(len(i), np.int64) if w is None else np.asarray(w, np.int64)
     assert np.all(i < j) and (len(i) == 0 or j.max() < n)
     assert len(np.unique(i * n + j)) == len(i), 'each pair at most once'
     adj = [{} for _ in range(n)]
     heap = []
-    for a, b, x in zip(i.tolist(), j.tolist(), d.tolist()):
-        e = [x, 1]                              # [sum of distances, observed pairs], shared both ways
+    for a, b, x, y in zip(i.tolist(), j.tolist(), d.tolist(), wt.tolist()):
+        e = [x, 1, y]                           # [sum of distances, observed pairs, weight], shared both ways
         adj[a][b] = adj[b][a] = e
         heap.append((x, a, b, 1))
     heapq.heapify(heap)
     sid = list(range(n))                        # slot -> scipy cluster id
     size = [1] * n
     alive = [True] * n
-    rows, observed, possible = [], [], []
+    rows, observed, possible, weight = [], [], [], []
     while heap:
         x, a, b, c = heapq.heappop(heap)
         if not (alive[a] and alive[b]):
@@ -54,6 +56,7 @@ def observed_average_linkage(i, j, d, n):
         rows.append([min(sid[a], sid[b]), max(sid[a], sid[b]), e[0] / e[1], size[a] + size[b]])
         observed.append(e[1])
         possible.append(size[a] * size[b])
+        weight.append(e[2])
         del adj[keep][gone], adj[gone][keep]
         for y, f in adj[gone].items():
             del adj[y][gone]
@@ -63,6 +66,7 @@ def observed_average_linkage(i, j, d, n):
             else:
                 g[0] += f[0]
                 g[1] += f[1]
+                g[2] += f[2]
                 f = g
             lo, hi = min(keep, y), max(keep, y)
             heapq.heappush(heap, (f[0] / f[1], lo, hi, f[1]))
@@ -81,10 +85,12 @@ def observed_average_linkage(i, j, d, n):
         a, b = roots[0], roots.pop(1)
         rows.append([min(sid[a], sid[b]), max(sid[a], sid[b]), UNJOINED, size[a] + size[b]])
         observed.append(0)
+        weight.append(0)
         possible.append(size[a] * size[b])
         sid[a] = n + len(rows) - 1
         size[a] += size[b]
-    return np.array(rows, dtype=np.float64).reshape(-1, 4), np.array(observed), np.array(possible)
+    out = np.array(rows, dtype=np.float64).reshape(-1, 4), np.array(observed), np.array(possible)
+    return out if w is None else (*out, np.array(weight))
 
 
 def forest_roots(Z):
@@ -401,7 +407,7 @@ def consensus_levels(lines, widths, index, procs, value='identical'):
     return K[starts], med, counts, (K, V)
 
 
-def hierarchy(keys, level, n):
+def hierarchy(keys, level, n, w=None):
     """Average-linkage hierarchy on the consensus join levels, over observed pairs only ->
-    (Z, observed, possible)."""
-    return observed_average_linkage(keys // n, keys % n, level, n)
+    (Z, observed, possible), plus per-row summed weights when w is given."""
+    return observed_average_linkage(keys // n, keys % n, level, n, w)

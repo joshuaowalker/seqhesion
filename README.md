@@ -77,7 +77,10 @@ relationships.
    above the fine ones.
 9. **Corpus levels** (0.4, 0.5, 0.75). Each component's groups at 0.3 become super-units, and a
    cover over them, chosen by representative identity, relates components across the corpus. The
-   result is one tree over every tip; corpus groups may span many components.
+   result is one tree over every tip; corpus groups may span many components. A merge resting on
+   one or two trees is *verified*: its unit pairs go into more shards with random context, which
+   confirm or dissent; a pair still on fewer than 3 votes counts as unobserved. Every coarse and
+   corpus group reports the votes behind its own merge and its weakest merge.
 10. **Releases and antenomina.** A release is a set of TSV tables and a JSON manifest. Each group
     has an *antenomen*: a stable id carried from release to release when a group and its
     predecessor are each other's best match and share more than half of the inputs both releases
@@ -124,6 +127,8 @@ From a FASTA to a release (every command takes `--procs N`):
     seqhesion corpus-plan   INTAKE CORPUS $(cat REGIONS/large.txt REGIONS/small.txt)
     seqhesion corpus-trees  CORPUS
     seqhesion corpus-layer  CORPUS
+    # verification rounds, until corpus-verify exits with status 3 (nothing thin), at most 3
+    seqhesion corpus-verify CORPUS --round 1 && seqhesion corpus-trees CORPUS --round 1 && seqhesion corpus-layer CORPUS
 
     seqhesion release OUT --input INPUT --intake INTAKE --layer --corpus CORPUS \
         $(for r in $(cat REGIONS/large.txt REGIONS/small.txt); do echo $r=$r/hierarchy.json; done) \
@@ -142,7 +147,7 @@ A release directory holds:
 
 | file | contents |
 | --- | --- |
-| `manifest.json` | schema (`seqhesion-release/0.6`), seqhesion commit, input fingerprint, method, levels, counts, and the columns of every table |
+| `manifest.json` | schema (`seqhesion-release/0.7`), seqhesion commit, input fingerprint, method, levels, counts, and the columns of every table |
 | `inputs.tsv` | every input: its tip, and whether it was built, not built, or dropped (with its intake class) |
 | `tips.tsv`, `tips.fasta` | every tip of a built component, with its extracted, oriented full-ITS sequence |
 | `groups.tsv` | one row per distinct group or stem node: size, level range, parent, cohesion, pull, margin, stem, spread, nearest group, shard verdicts, and its node in the dendrogram |

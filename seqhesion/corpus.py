@@ -21,8 +21,22 @@ Cortinariaceae, two independent draws agreed at 0.3-0.75 (ARI 0.90-0.98) and not
 families (display only) came out as single nodes (best-node F1 0.96-0.97 vs 0.82 apart). So
 LEVELS stop at 0.75. A navigation aid, not a phylogeny. Labels play no part.
 
+  verify       (2026-10-16) a unit pair seen by one or two trees can decide a merge (mm-to-ref's
+               cross-order groups: the bridge between two solid clades was a single-vote pair; the
+               cover samples units by identity, which at this distance barely ranks relatives).
+               Each round, every merge at <= max(LEVELS) resting on fewer than VERIFY_BELOW votes
+               (counted with every pair) gets its cross unit pairs, the observed ones and then up to
+               VERIFY_PAIRS in all, into VERIFY_REPEAT more shards each, packed with random corpus
+               units as context: independent trees that confirm the join or dissent from it.
+               Lab (2026-10-16, 436 units around three such cases): three rounds of 8 shards removed
+               13 of 13 thin merges and the three cross-order joins, and changed nothing else (ARI
+               0.94-1.00); stratified random shards removed them too but shifted the levels' scale.
+  min votes    the layer counts a unit pair as observed only with MIN_VOTES or more votes: anything
+               still thin after verifying stays unjoined rather than joined by one tree
+
 Steps: plan (needs the corpus: run where the intake is), trees (chunked: --chunk I --of N, e.g. on
-AWS), layer (prepares the trees and builds the layer).
+AWS), layer (prepares the trees and builds the layer); then verify rounds (verify --round R, trees
+--round R, layer) until verify finds no thin merge or VERIFY_ROUNDS are done.
 """
 import collections
 import json
@@ -43,9 +57,18 @@ SIZE = 150
 COVERS = 2
 DEPTH = 6
 CONTEXT = 20
+MIN_VOTES = 3                 # a unit pair on fewer votes counts as unobserved
+VERIFY_BELOW = 3              # a merge on fewer votes is verified
+VERIFY_REPEAT = 8             # more shards per verified unit pair
+VERIFY_PAIRS = 4              # cross unit pairs verified per thin merge (observed ones first)
+VERIFY_FILL = 20              # random corpus units per verification shard, as context
+VERIFY_CONTEXT = 10           # random rooting units per verification shard (pruned)
+VERIFY_ROUNDS = 3
 METHOD = ('corpus layer: super-units = each component\'s groups (and lone tips) at 0.3; a cover over units by '
           'representative identity (2 covers, depth 6, 150 units per shard, one random member each, the seed\'s next 20 '
-          'units as rooting context); unit-pair median join level, average linkage over observed unit pairs; v1 (2026-10-05)')
+          'units as rooting context); unit-pair median join level, average linkage over observed unit pairs; '
+          'verification rounds: every merge <= 0.75 on < 3 votes gets its cross unit pairs into 8 more shards with random '
+          'context (up to 3 rounds); unit pairs on < 3 votes count as unobserved; v2 (2026-10-16)')
 
 
 def super_units(region_dirs, hierarchy_name, log=print):
@@ -132,15 +155,18 @@ def plan(region_dirs, intake_dir, out, hierarchy_name='hierarchy.json', depth=DE
     json.dump({'unit_level': UNIT_LEVEL, 'tips': tips, 'unit_of_tip': unit.tolist(), 'component_of_tip': comp,
                'components': [Path(r).name for r in region_dirs]}, open(out / 'units.json', 'w'))
     json.dump({'scaffold': [], 'shards': shards, 'corpus': {'units': U, 'covers': covers, 'depth': depth, 'size': SIZE, 'seed': seed,
+                                                          'intake': str(Path(intake_dir).resolve()),
                                                           'context': CONTEXT, 'neighbour_identity': NBR_ID, 'reps': REPS}},
               open(out / 'manifest.json', 'w'))
     log(f'corpus plan: {U} units, {len(shards)} shards, {len(need)} sequences')
     return len(shards)
 
 
-def chunk_names(manifest, chunk, of):
-    """The shards of chunk `chunk` of `of`: balanced by size squared (L-INS-i cost), largest first."""
-    names = sorted(manifest['shards'], key=lambda n: (-len(manifest['shards'][n]['members']) - len(manifest['shards'][n]['context']), n))
+def chunk_names(manifest, chunk, of, round_=None):
+    """The shards of chunk `chunk` of `of`: balanced by size squared (L-INS-i cost), largest first.
+    With round_, only that verification round's shards (so a chunk never rebuilds earlier ones)."""
+    names = [n for n in manifest['shards'] if round_ is None or manifest['shards'][n].get('verify_round') == round_]
+    names = sorted(names, key=lambda n: (-len(manifest['shards'][n]['members']) - len(manifest['shards'][n]['context']), n))
     load = [0] * of
     mine = []
     for n in names:
@@ -151,11 +177,11 @@ def chunk_names(manifest, chunk, of):
     return mine
 
 
-def trees(out, chunk=0, of=1, procs=8, log=print):
+def trees(out, chunk=0, of=1, procs=8, log=print, round_=None):
     """Build the trees of one chunk of the corpus plan into OUT/trees (cached; twins once)."""
     out = Path(out)
     man = json.load(open(out / 'manifest.json'))
-    mine = chunk_names(man, chunk, of)
+    mine = chunk_names(man, chunk, of, round_)
     sub = dict(man, shards={n: man['shards'][n] for n in mine})
     log(f'chunk {chunk}/{of}: {len(mine)} shards')
     cover.build_trees(sub, read_fasta(out / 'seqs.fasta'), out / 'trees', procs, log=log)
@@ -171,10 +197,113 @@ def layer(out, procs=8, log=print):
     shardtrees.export(out, 0, procs, log=log)
     u = json.load(open(out / 'units.json'))
     _, lines, widths = shardtrees.read(out, 0)
-    lay = sparse.build_layer(lines, widths, u['tips'], np.array(u['unit_of_tip']), procs=procs, log=log, levels=LEVELS)
+    lay = sparse.build_layer(lines, widths, u['tips'], np.array(u['unit_of_tip']), procs=procs, log=log, levels=LEVELS,
+                             min_votes=MIN_VOTES)
+    lay['verify_rounds'] = sorted({s['verify_round'] for s in json.load(open(out / 'manifest.json'))['shards'].values()
+                                   if 'verify_round' in s})
     lay.update({'method': METHOD, 'unit_level': UNIT_LEVEL, 'source': f'{len(lines)} corpus shard trees'})
     sparse._write(out / 'layer.json', lay)
     return lay
+
+
+def thin_merges(out, procs=8, below=VERIFY_BELOW):
+    """The merges at <= max(LEVELS) whose observed cross unit pairs hold fewer than `below` votes in
+    all, every pair counted (no minimum): [(units A, units B, observed cross pairs)], plus the
+    observed pairs as a sorted key array and U."""
+    out = Path(out)
+    u = json.load(open(out / 'units.json'))
+    unit = np.array(u['unit_of_tip'])
+    U = int(unit.max()) + 1
+    _, lines, widths = shardtrees.read(out, 0)
+    UK, UV = sparse.unit_pairs(lines, widths, u['tips'], unit, procs=procs)
+    starts = np.flatnonzero(np.r_[True, UK[1:] != UK[:-1]])
+    counts = np.diff(np.r_[starts, len(UK)])
+    ukeys = UK[starts]
+    umed = (UV[starts + (counts - 1) // 2] + UV[starts + counts // 2]) / 2
+    Z, _, _, votes = sparse.linkage(ukeys, umed, U, counts)
+    members = {i: [i] for i in range(U)}
+    thin = []
+    for r, (a, b, h, _) in enumerate(Z):
+        A, B = members.pop(int(a)), members.pop(int(b))
+        members[U + r] = A + B
+        if np.isfinite(h) and h <= max(LEVELS) and votes[r] < below:
+            x, y = np.meshgrid(A, B, indexing='ij')
+            keys = (np.minimum(x, y) * U + np.maximum(x, y)).ravel() if len(A) * len(B) <= 10 ** 6 else None
+            obs = [] if keys is None else keys[np.isin(keys, ukeys)].tolist()
+            thin.append((A, B, obs))
+    return thin, ukeys, U
+
+
+def verify(out, round_, procs=8, log=print, below=VERIFY_BELOW, repeat=VERIFY_REPEAT, intake_dir=None):
+    """One verification round: verification shards for every thin merge, appended to the plan
+    (verify_round = round_). Returns how many were added (0: nothing is thin)."""
+    out = Path(out)
+    man = json.load(open(out / 'manifest.json'))
+    if any(s.get('verify_round') == round_ for s in man['shards'].values()):
+        raise SystemExit(f'round {round_} is already planned')
+    missing = [n for n in man['shards'] if not (out / 'trees' / f'{n}.nwk.key.json').exists()]
+    if missing:
+        raise SystemExit(f'{len(missing)} planned trees missing (e.g. {missing[:3]}): build them first')
+    shardtrees.export(out, 0, procs, log=log)
+    thin, ukeys, U = thin_merges(out, procs, below)
+    seed = man.get('corpus', {}).get('seed', 0)
+    rng = random.Random(f'corpus:{seed}:verify:{round_}')
+    targets = set()
+    for A, B, obs in thin:
+        cand = sorted(obs)[:VERIFY_PAIRS]
+        while len(cand) < min(VERIFY_PAIRS, len(A) * len(B)):
+            a, b = rng.choice(A), rng.choice(B)
+            k = min(a, b) * U + max(a, b)
+            if k not in cand:
+                cand.append(k)
+        targets |= set(cand)
+    targets = sorted(targets)
+    log(f'verify round {round_}: {len(thin)} merges at <= {max(LEVELS)} on < {below} votes; '
+        f'{len(targets)} unit pairs x {repeat} shards')
+    if not targets:
+        return 0
+    u = json.load(open(out / 'units.json'))
+    members = collections.defaultdict(list)
+    for i, x in enumerate(u['unit_of_tip']):
+        members[x].append(u['tips'][i])
+    room = SIZE - VERIFY_FILL
+    shards = []
+    for _ in range(repeat):                   # each target pair once per pass, in a different shard
+        order = targets[:]
+        rng.shuffle(order)
+        cur = set()
+        for k in order:
+            pair = {k // U, k % U}
+            if len(cur | pair) > room:
+                shards.append(cur)
+                cur = set()
+            cur |= pair
+        if cur:
+            shards.append(cur)
+    added = {}
+    for j, us in enumerate(shards):
+        fill = [x for x in rng.sample(range(U), VERIFY_FILL + len(us)) if x not in us][:SIZE - len(us)]
+        units = sorted(us | set(fill))
+        ctx = [x for x in rng.sample(range(U), VERIFY_CONTEXT + len(units)) if x not in set(units)][:VERIFY_CONTEXT]
+        added[f'v{round_}.{j:04d}'] = {'cover': 0, 'seed': f'u{units[0]}', 'units': units, 'verify_round': round_,
+                                       'members': sorted(rng.choice(members[x]) for x in units),
+                                       'context': sorted(rng.choice(members[x]) for x in ctx)}
+    man['shards'].update(added)
+    seqs = read_fasta(out / 'seqs.fasta')
+    need = sorted({t for s in added.values() for t in s['members'] + s['context']} - set(seqs))
+    if need:
+        intake_dir = intake_dir or man.get('corpus', {}).get('intake')
+        if not intake_dir:
+            raise SystemExit('the plan does not record its intake: pass --intake')
+        corpus_seqs = read_fasta(Path(intake_dir) / 'full.derep.fasta')
+        seqs.update({t: corpus_seqs[t] for t in need})
+        order = sorted(seqs)
+        write_fasta(out / 'seqs.fasta.tmp', seqs, order)
+        (out / 'seqs.fasta.tmp').replace(out / 'seqs.fasta')
+    json.dump(man, open(out / 'manifest.json.tmp', 'w'))
+    (out / 'manifest.json.tmp').replace(out / 'manifest.json')
+    log(f'verify round {round_}: {len(added)} shards added, {len(need)} new sequences')
+    return len(added)
 
 
 def release_view(comps, units, layer):
@@ -266,11 +395,11 @@ def release_view(comps, units, layer):
 def corpus_linkage(comps, units, layer):
     """One dendrogram over every tip: each component's capped linkage (its rows up to UNIT_LEVEL)
     with the corpus layer's over units above. Layer merges below UNIT_LEVEL are drawn just above it.
-    Returns ({Z, observed, possible}, tips in index order)."""
+    Returns ({Z, observed, possible, votes}, tips in index order); votes: a layer row's votes, else None."""
     order = [t for c in comps for t in c[0]]
     gi = {t: i for i, t in enumerate(order)}
     n = len(order)
-    Z, obs, pos = [], [], []
+    Z, obs, pos, vts = [], [], [], []
     root_of_tip = {}
     off = 0
     for tips, _, _, link in comps:
@@ -284,6 +413,7 @@ def corpus_linkage(comps, units, layer):
             Z.append([new_id[int(a)], new_id[int(b)], ht, sz])
             obs.append(link['observed'][r])
             pos.append(link['possible'][r])
+            vts.append((link.get('votes') or [None] * len(link['Z']))[r])
             new_id[nc + r] = k
             parent[new_id[int(a)]] = k
             parent[new_id[int(b)]] = k
@@ -314,7 +444,8 @@ def corpus_linkage(comps, units, layer):
         Z.append([na, nb, h_, size[na] + size[nb]])
         obs.append(layer['observed'][r])
         pos.append(layer['possible'][r])
+        vts.append((layer.get('votes') or [None] * len(layer['linkage']))[r])
         node[U + r] = k
         size[k] = size[na] + size[nb]
         hgt[k] = h_ if h_ is not None else max(hgt.get(na, 0.0) or 0.0, hgt.get(nb, 0.0) or 0.0)
-    return {'Z': Z, 'observed': obs, 'possible': pos}, order
+    return {'Z': Z, 'observed': obs, 'possible': pos, 'votes': vts}, order
