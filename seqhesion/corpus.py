@@ -27,7 +27,10 @@ LEVELS stop at 0.75. A navigation aid, not a phylogeny. Labels play no part.
                Each round, every merge at <= max(LEVELS) resting on fewer than VERIFY_BELOW votes
                (counted with every pair) gets its cross unit pairs, the observed ones and then up to
                VERIFY_PAIRS in all, into VERIFY_REPEAT more shards each, packed with random corpus
-               units as context: independent trees that confirm the join or dissent from it.
+               units as context: independent trees that confirm the join or dissent from it. Only
+               the target pairs' units vote; the random units are context, in the tree but pruned
+               before co-association (when they voted, their incidental single-vote pairs became
+               the next rounds' thin merges: 29 of the 30 left after 8 rounds, lab 2026-10-16).
                Lab (2026-10-16, 436 units around three such cases): three rounds of 8 shards removed
                13 of 13 thin merges and the three cross-order joins, and changed nothing else (ARI
                0.94-1.00); stratified random shards removed them too but shifted the levels' scale.
@@ -36,7 +39,7 @@ LEVELS stop at 0.75. A navigation aid, not a phylogeny. Labels play no part.
 
 Steps: plan (needs the corpus: run where the intake is), trees (chunked: --chunk I --of N, e.g. on
 AWS), layer (prepares the trees and builds the layer); then verify rounds (verify --round R, trees
---round R, layer) until verify finds no thin merge or VERIFY_ROUNDS are done.
+--round R) until verify finds no thin merge (exit status 3) or VERIFY_ROUNDS are done; then layer.
 """
 import collections
 import json
@@ -61,14 +64,15 @@ MIN_VOTES = 3                 # a unit pair on fewer votes counts as unobserved
 VERIFY_BELOW = 3              # a merge on fewer votes is verified
 VERIFY_REPEAT = 8             # more shards per verified unit pair
 VERIFY_PAIRS = 4              # cross unit pairs verified per thin merge (observed ones first)
-VERIFY_FILL = 20              # random corpus units per verification shard, as context
+VERIFY_FILL = 20              # random corpus units per verification shard, as context (pruned: no votes)
 VERIFY_CONTEXT = 10           # random rooting units per verification shard (pruned)
-VERIFY_ROUNDS = 3
+VERIFY_ROUNDS = 6             # at most; stop earlier when nothing is thin
 METHOD = ('corpus layer: super-units = each component\'s groups (and lone tips) at 0.3; a cover over units by '
           'representative identity (2 covers, depth 6, 150 units per shard, one random member each, the seed\'s next 20 '
           'units as rooting context); unit-pair median join level, average linkage over observed unit pairs; '
-          'verification rounds: every merge <= 0.75 on < 3 votes gets its cross unit pairs into 8 more shards with random '
-          'context (up to 3 rounds); unit pairs on < 3 votes count as unobserved; v2 (2026-10-16)')
+          'verification rounds: every merge <= 0.75 on < 3 votes gets its cross unit pairs into 8 more shards, with random '
+          'units as non-voting context (until nothing is thin, at most 6 rounds); unit pairs on < 3 votes count as '
+          'unobserved; v2 (2026-10-16)')
 
 
 def super_units(region_dirs, hierarchy_name, log=print):
@@ -282,9 +286,9 @@ def verify(out, round_, procs=8, log=print, below=VERIFY_BELOW, repeat=VERIFY_RE
             shards.append(cur)
     added = {}
     for j, us in enumerate(shards):
-        fill = [x for x in rng.sample(range(U), VERIFY_FILL + len(us)) if x not in us][:SIZE - len(us)]
-        units = sorted(us | set(fill))
-        ctx = [x for x in rng.sample(range(U), VERIFY_CONTEXT + len(units)) if x not in set(units)][:VERIFY_CONTEXT]
+        units = sorted(us)                          # the target pairs' units: the only ones that vote
+        n_ctx = SIZE - len(units) + VERIFY_CONTEXT     # random context (filler and rooting), pruned before votes
+        ctx = [x for x in rng.sample(range(U), n_ctx + len(units)) if x not in us][:n_ctx]
         added[f'v{round_}.{j:04d}'] = {'cover': 0, 'seed': f'u{units[0]}', 'units': units, 'verify_round': round_,
                                        'members': sorted(rng.choice(members[x]) for x in units),
                                        'context': sorted(rng.choice(members[x]) for x in ctx)}
