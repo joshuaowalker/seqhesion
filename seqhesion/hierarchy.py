@@ -145,8 +145,9 @@ def stem_nodes(Z, n, kv, levels, stem_min=STEM_MIN):
     at = collections.defaultdict(list)
     for _, s, ht, ph in linkage_nodes(Z, n, top_level):
         if ph - ht >= stem_min and not any(ht <= L < ph for L in levels):
-            g = round(float(np.floor((ph - 1e-12) / GRID) * GRID), 6)
-            assert ht <= g < ph, (ht, ph, g)
+            # below the top as published (6 decimals): a top a hair above a grid point rounds onto it
+            g = round(float(np.floor((round(ph, 6) - 1e-12) / GRID) * GRID), 6)
+            assert round(ht, 6) <= g < round(ph, 6), (ht, ph, g)
             at[g].append((s, ht, ph))
     Zf = np.array([[r[0], r[1], np.inf if r[2] is None else r[2], r[3]] for r in Z], float)
     out = []

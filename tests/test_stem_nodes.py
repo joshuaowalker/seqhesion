@@ -46,3 +46,12 @@ def test_parent_is_the_nearest_enclosing_group_or_node():
     by = {r['group_id']: r for r in rows}
     assert by['N1']['parent_id'] == 'L1' and by['L1']['parent_id'] == 'L2' and by['L2']['parent_id'] is None
     assert by['N1']['dendrogram_node'] == 'm0' and by['N1']['height_top'] == 0.003 and by['N1']['linkage_stem'] == 0.003
+
+
+def test_measured_below_the_published_top(monkeypatch):
+    # {0,1}'s top is a hair above the grid point 0.003 and is published as 0.003: measured at 0.0025, not 0.003
+    import sys
+    pairs = {**PAIRS, (0, 2): 0.0030000004, (1, 2): 0.0030000004}
+    monkeypatch.setattr(sys.modules[__name__], 'PAIRS', pairs)
+    st = stem_nodes(tree(), N, votes(), LEVELS)
+    assert [(x['tips'], x['top'], x['measured_at']) for x in st] == [([0, 1], 0.003, 0.0025)]
