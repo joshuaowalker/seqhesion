@@ -76,6 +76,30 @@ def cmd_cover_trees(a):
     cover.build_jobs(j['jobs'], a.regions_root, j['covers'], a.chunk, a.of, a.procs, log=_log)
 
 
+def cmd_place_plan(a):
+    """ITS2-only placement, step 1 (where the intake is): statuses that need no tree, and one job per
+    (query, shard) for the rest, against the components REGIONS will release (same --min-id)."""
+    from . import export, place, regions
+    from .fasta import read_fasta
+    classes = export.read_tsv(Path(a.intake) / 'classes.tsv')
+    comp_of = export.component_of(classes, regions.components(a.intake, a.min_id))
+    covers_of = {}
+    for r in a.regions:
+        rd = Path(r)
+        covers_of[comp_of[next(iter(read_fasta(rd / 'comp.fasta')))]] = rd / a.covers
+    plan = place.plan_inputs(a.intake, classes, comp_of, covers_of, a.procs, log=_log)
+    out = Path(a.out)
+    out.mkdir(parents=True, exist_ok=True)
+    json.dump(plan, open(out / 'plan.json.tmp', 'w'), separators=(',', ':'))
+    (out / 'plan.json.tmp').replace(out / 'plan.json')
+
+
+def cmd_place_shards(a):
+    """ITS2-only placement, step 2: one chunk of the plan's shard re-inferences (an AWS array)."""
+    from . import place
+    place.place_shards(a.out, a.regions_root, a.chunk, a.of, a.procs, log=_log)
+
+
 def cmd_prepare(a):
     from . import shardtrees
     for c in (0, 1):
@@ -188,6 +212,8 @@ def cmd_release(a):
     from . import corpus as corpus_mod, sparse
     if a.corpus and not a.layer:
         raise SystemExit('--corpus needs --layer (its units are the coarse groups at 0.3)')
+    if a.placements and a.no_place_its2:
+        raise SystemExit('--placements and --no-place-its2 contradict each other')
     corpus = None
     if a.corpus:
         cd = Path(a.corpus)
@@ -204,7 +230,7 @@ def cmd_release(a):
         comps.append((rd, h))
     export.write_release(a.out, a.input, a.intake, comps, regions.components(a.intake, a.min_id), a.procs, log=_log,
                          settings={'component_min_id': a.min_id}, previous=a.previous, place_its2=not a.no_place_its2,
-                         corpus=corpus)
+                         corpus=corpus, placements=a.placements)
     if a.latest:
         link = Path(a.out).parent / 'latest'
         tmp = Path(a.out).parent / '.latest.tmp'
@@ -295,6 +321,14 @@ def main(argv=None):
     p.add_argument('--round', type=int, required=True)
     p.add_argument('--intake', help="the intake dir, when the plan does not record it (plans before 2026-10-16)")
     add('corpus-layer', cmd_corpus_layer, 'out')
+    p = add('place-plan', cmd_place_plan, 'intake', 'out')
+    p.add_argument('regions', nargs='+', help="the region dirs the release will build (the release's specs)")
+    p.add_argument('--min-id', type=float, default=86.0, help="as the release's --min-id")
+    p.add_argument('--covers', default='covers')
+    p = add('place-shards', cmd_place_shards, 'out')
+    p.add_argument('regions_root', help='the directory holding the planned region dirs (by name)')
+    p.add_argument('--chunk', type=int, default=0)
+    p.add_argument('--of', type=int, default=1)
     p = add('release', cmd_release, 'out')
     p.add_argument('--releases', help="with OUT_DIR 'auto': the releases directory; the release is named YYYYMMDD.NN + f")
     p.add_argument('--input', required=True, help='the input directory (its manifest.json is recorded)')
@@ -309,6 +343,8 @@ def main(argv=None):
                                     "components', whose layers then stop at 0.3")
     p.add_argument('--no-place-its2', action='store_true',
                    help='skip ITS2-only placement (hours at scale on one machine); those inputs stay dropped:its2')
+    p.add_argument('--placements', metavar='PLACE_DIR',
+                   help='finish a placement run (place-plan, then every place-shards chunk) instead of placing here')
     a = ap.parse_args(argv)
     a.fn(a)
 

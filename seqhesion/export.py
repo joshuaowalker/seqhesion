@@ -284,6 +284,21 @@ def seqhesion_commit():
         return 'unknown'
 
 
+def component_of(classes, all_components):
+    """{tip: its component's anchor}: the tip with the most inputs (ties: the smallest id)."""
+    inputs_of_tip = collections.defaultdict(set)
+    for r in classes:
+        if r['tip']:
+            inputs_of_tip[r['tip']].add(r['seq_id'])
+    n_inputs = {t: len(v) for t, v in inputs_of_tip.items()}
+    comp_of = {}
+    for ids in all_components:
+        anchor = min(ids, key=lambda t: (-n_inputs[t], t))
+        for t in ids:
+            comp_of[t] = anchor
+    return comp_of
+
+
 def read_tsv(path):
     return list(csv.DictReader(open(path), delimiter='\t'))
 
@@ -453,12 +468,14 @@ def next_name(releases_dir, kind, now=None):
 
 
 def write_release(out, input_dir, intake_dir, components, all_components, threads=8, log=print, settings=None, previous=None,
-                  place_its2=True, covers='covers', corpus=None):
+                  place_its2=True, covers='covers', corpus=None, placements=None):
     """components: [(region_dir, hierarchy dict from hierarchy.build or its JSON)] to publish.
     all_components: every component of the intake (lists of tip ids), for inputs.tsv.
     previous: the previous release directory, whose group ids are carried forward.
     corpus: (units.json, layer.json) of the corpus layer (seqhesion.corpus), whose levels follow
-    the components' own (their layers capped at its unit level)."""
+    the components' own (their layers capped at its unit level).
+    placements: a placement directory (seqhesion.place: plan.json from place-plan, joins/ from every
+    place-shards chunk) to finish instead of placing here."""
     out = Path(out)
     release = out.name
     input_dir, intake_dir = Path(input_dir), Path(intake_dir)
@@ -470,11 +487,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
             inputs_of_tip[r['tip']].add(r['seq_id'])
     derep = read_fasta(intake_dir / 'full.derep.fasta')
     n_inputs = {t: len(v) for t, v in inputs_of_tip.items()}
-    comp_of = {}
-    for ids in all_components:
-        anchor = min(ids, key=lambda t: (-n_inputs[t], t))
-        for t in ids:
-            comp_of[t] = anchor
+    comp_of = component_of(classes, all_components)
 
     # pass 1: every group of every component, by its tips
     built_comps = []
@@ -635,7 +648,12 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
     placed = None
     if place_its2:
         covers_of = {c['component']: Path(c['region_dir']) / covers for c in meta['components']}
-        prow, placed = place.place_inputs(intake_dir, classes, built_group_at, meta['levels'], comp_of, covers_of, threads, log)
+        if placements:
+            plan = json.load(open(Path(placements) / 'plan.json'))
+            place.check_plan(plan, comp_of, covers_of)
+            prow, placed = place.reduce(plan, place.read_results(placements), built_group_at, meta['levels'], log)
+        else:
+            prow, placed = place.place_inputs(intake_dir, classes, built_group_at, meta['levels'], comp_of, covers_of, threads, log)
         pt = Table(out, 'placements.tsv')
         for r in prow:
             pt.row(**r)

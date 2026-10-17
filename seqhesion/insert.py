@@ -36,22 +36,24 @@ from .fasta import read_fasta, write_fasta
 SHARDS_PER_COVER = 3
 
 
-def shard_mask(trees_dir, shard):
+def shard_mask(trees_dir, shard, cache=True):
     """Columns of the stored alignment that trimAl -gappyout kept (the shard's trimmed alignment),
-    cached beside it; checked once against the stored trimmed alignment."""
+    cached beside it (unless cache is False: a remote worker writes only its results); checked
+    against the stored trimmed alignment whenever computed."""
     td = Path(trees_dir)
-    cache = td / f'{shard}.mask.json'
-    if cache.exists():
-        return json.load(open(cache))
+    path = td / f'{shard}.mask.json'
+    if cache and path.exists():
+        return json.load(open(path))
     out = subprocess.run([tools.TRIMAL, '-in', str(td / f'{shard}.aln.fasta'), '-out', '/dev/null', '-gappyout', '-colnumbering'],
                          capture_output=True, text=True, check=True).stdout
     cols = [int(x) for x in out.split('\t', 1)[1].replace(' ', '').strip().split(',')]
     aln, trim = read_fasta(td / f'{shard}.aln.fasta'), read_fasta(td / f'{shard}.trim.fasta')
     if any(''.join(aln[k][c] for c in cols) != trim[k] for k in trim):
         raise RuntimeError(f'{shard}: the recomputed trimAl mask does not reproduce the stored trimmed alignment')
-    tmp = Path(f'{cache}.{os.getpid()}.tmp')          # workers may compute the same shard's mask at once
-    json.dump(cols, open(tmp, 'w'))
-    tmp.replace(cache)
+    if cache:
+        tmp = Path(f'{path}.{os.getpid()}.tmp')       # workers may compute the same shard's mask at once
+        json.dump(cols, open(tmp, 'w'))
+        tmp.replace(path)
     return cols
 
 
@@ -125,9 +127,9 @@ def join_values(tree_path, trim_path, members, scaffold, q):
 
 def in_shard(job):
     """q's join levels in one shard, and whether the re-inference rearranged its surroundings."""
-    trees_dir, shard, q, seq, fragment, members, scaffold = job
+    trees_dir, shard, q, seq, fragment, members, scaffold, *rest = job
     td = Path(trees_dir)
-    cols = shard_mask(td, shard)
+    cols = shard_mask(td, shard, cache=rest[0] if rest else True)
     trim = read_fasta(td / f'{shard}.trim.fasta')
     with tempfile.TemporaryDirectory() as d:
         d = Path(d)
