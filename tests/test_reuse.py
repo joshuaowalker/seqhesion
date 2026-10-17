@@ -37,3 +37,29 @@ def test_chunks_partition_the_jobs():
     parts = [cover.chunk_jobs(jobs, c, 4) for c in range(4)]
     names = sorted(j['names'][0] for p in parts for j in p)
     assert names == sorted(j['names'][0] for j in jobs) and all(parts)
+
+
+def test_twins_of_a_reused_tree_are_linked_too(tmp_path):
+    old = tmp_path / 'old'
+    fake_tree(old, 'c0.0007', ['a', 'b', 'c'])
+    man = {'scaffold': [], 'shards': {'c0.0000': {'cover': 0, 'seed': 'a', 'members': ['c', 'a', 'b']},
+                                      'c1.0003': {'cover': 1, 'seed': 'b', 'members': ['a', 'b', 'c']}}}
+    new = tmp_path / 'new'
+    assert cover.link_reusable(man, SEQS, new, [old], log=lambda m: None) == 2
+    for n in ('c0.0000', 'c1.0003'):
+        assert os.path.samefile(new / f'{n}.nwk', old / 'c0.0007.nwk')
+
+
+def test_a_missing_twin_is_a_job(tmp_path):
+    rd = tmp_path / 'r'
+    rd.mkdir()
+    (rd / 'comp.fasta').write_text(''.join(f'>{i}\n{s}\n' for i, s in SEQS.items()))
+    man = {'scaffold': [], 'shards': {'c0.0000': {'cover': 0, 'seed': 'a', 'members': ['c', 'a', 'b']},
+                                      'c1.0003': {'cover': 1, 'seed': 'b', 'members': ['a', 'b', 'c']}}}
+    (rd / 'covers').mkdir()
+    json.dump(man, open(rd / 'covers' / 'manifest.json', 'w'))
+    fake_tree(rd / 'covers' / 'trees', 'c0.0000', ['a', 'b', 'c'])
+    jobs = cover.missing_trees([rd], log=lambda m: None)
+    assert [j['names'] for j in jobs] == [['c0.0000', 'c1.0003']]
+    fake_tree(rd / 'covers' / 'trees', 'c1.0003', ['a', 'b', 'c'])
+    assert cover.missing_trees([rd], log=lambda m: None) == []

@@ -275,6 +275,7 @@ def link_reusable(manifest, seqs, tree_dir, reuse_dirs, log=print):
     shard's (the same sequences in the same order, recipe and tools: seqhesion.cache), wherever it was
     built and whatever it was called: a cover redrawn after a few sequences were added keeps many shards
     under other names. Tree files are never modified in place, so a link cannot change the source.
+    Every shard name of the input is linked (twins too: a twin is another name for the same tree).
     Returns how many trees were linked."""
     from . import tools
     idx = reuse_index(reuse_dirs)
@@ -282,20 +283,21 @@ def link_reusable(manifest, seqs, tree_dir, reuse_dirs, log=print):
     td.mkdir(parents=True, exist_ok=True)
     linked = 0
     for ids, names in distinct_inputs(manifest).items():
-        name = names[0]
-        if Path(f'{td / name}.nwk.key.json').exists():
+        todo = [n for n in names if not Path(f'{td / n}.nwk.key.json').exists()]
+        if not todo:
             continue                                     # already here: cache.valid decides when building
         src = idx.get(tools.build_key({i: seqs[i] for i in ids}, order=list(ids)))
         if src is None:
             continue
-        for ext in TREE_FILES:                           # the key sidecar last
-            tmp = Path(f'{td / name}{ext}.tmp')
-            if tmp.exists():
-                tmp.unlink()
-            os.link(f'{src}{ext}', tmp)
-            os.replace(tmp, f'{td / name}{ext}')
-        linked += 1
-    log(f'reuse: {linked} trees linked from {len(idx)} earlier ones')
+        for name in todo:
+            for ext in TREE_FILES:                       # the key sidecar last
+                tmp = Path(f'{td / name}{ext}.tmp')
+                if tmp.exists():
+                    tmp.unlink()
+                os.link(f'{src}{ext}', tmp)
+                os.replace(tmp, f'{td / name}{ext}')
+            linked += 1
+    log(f'reuse: {linked} shard trees linked from {len(idx)} earlier ones')
     return linked
 
 
@@ -337,8 +339,10 @@ def build_trees(manifest, seqs, tree_dir, procs=6, log=print, reuse=()):
 
 
 def missing_trees(region_dirs, covers='covers', log=print):
-    """The trees the planned covers of these regions still need (not present with the right key): a
-    job list for build_jobs, one job per distinct tree input with every shard name it serves."""
+    """The trees the planned covers of these regions still need (not present with the right key under
+    every shard name): a job list for build_jobs, one job per distinct tree input with every shard name
+    it serves. An input whose first name has its tree but a twin does not is a job too: build_jobs
+    reuses the tree and only copies it."""
     from . import cache, tools
     jobs = []
     for rd in map(Path, region_dirs):
@@ -347,7 +351,7 @@ def missing_trees(region_dirs, covers='covers', log=print):
         td = rd / covers / 'trees'
         for ids, names in distinct_inputs(man).items():
             key = tools.build_key({i: seqs[i] for i in ids}, order=list(ids))
-            if not cache.valid(td / f'{names[0]}.nwk', key, tips=list(ids)):
+            if not all(cache.valid(td / f'{n}.nwk', key, tips=list(ids)) for n in names):
                 jobs.append({'region': rd.name, 'names': names, 'ids': list(ids)})
     log(f'{len(jobs)} trees to build over {len(region_dirs)} regions')
     return jobs
@@ -383,10 +387,14 @@ def build_jobs(jobs, regions_root, covers='covers', chunk=0, of=1, procs=6, log=
         for i, _ in enumerate(pool.imap_unordered(_tree_job, work), 1):
             if i % 40 == 0:
                 log(f'  {i}/{len(work)} trees')
+    from . import cache
     copied = 0
     for j in mine:
         td = root / j['region'] / covers / 'trees'
+        key = json.load(open(td / f"{j['names'][0]}.nwk.key.json"))['key']
         for twin in j['names'][1:]:
+            if cache.valid(td / f'{twin}.nwk', key, tips=j['ids']):
+                continue
             for ext in TREE_FILES:
                 shutil.copyfile(td / f"{j['names'][0]}{ext}", td / f'{twin}{ext}.tmp')
                 os.replace(td / f'{twin}{ext}.tmp', td / f'{twin}{ext}')
