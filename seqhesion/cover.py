@@ -220,7 +220,86 @@ def _init_seqs(seqs):
 TREE_FILES = ('.fasta', '.aln.fasta', '.trim.fasta', '.nwk', '.nwk.key.json')     # the key sidecar last
 
 
-def build_trees(manifest, seqs, tree_dir, procs=6, log=print):
+def plan_region(region_dir, depth=3, size=150, quota=30, quota_id=97.0, covers=2, log=print):
+    """The covers manifest of a region dir and the sequences its trees need ({id: seq}): small regions
+    draw on their corpus-wide context (seeds from their own tips only)."""
+    from .fasta import read_fasta
+    rd = Path(region_dir)
+    seqs = read_fasta(rd / 'comp.fasta')
+    own = set(seqs)
+    small = json.load(open(rd / 'region.json')).get('kind') == 'small'
+    nbrs = load_knn(rd / 'knn.tsv')
+    if small:
+        seqs.update(read_fasta(rd / 'context.fasta'))
+        nbrs = {t: [x for x in nbrs.get(t, []) if x != t] for t in sorted(own)}
+    ident = load_identity(rd / 'knn.tsv') if quota else None
+    man = plan(nbrs, own, scaffold_of(rd / 'comp_cent_0.85.fasta'), covers, depth, size, quota, quota_id, ident, log=log)
+    if small:
+        man = as_context(man, own)
+    return man, seqs
+
+
+def region_seqs(region_dir):
+    """Every sequence a region's shard trees can hold: its own tips and, for a small region, its context."""
+    from .fasta import read_fasta
+    rd = Path(region_dir)
+    seqs = read_fasta(rd / 'comp.fasta')
+    if (rd / 'context.fasta').exists():
+        seqs.update(read_fasta(rd / 'context.fasta'))
+    return seqs
+
+
+def distinct_inputs(manifest):
+    """{tree input (ids in order): [shard names]}: shards with the same input are one tree (twins)."""
+    out = {}
+    for name in sorted(manifest['shards']):
+        out.setdefault(tuple(shard_input(manifest, name)), []).append(name)
+    return out
+
+
+def reuse_index(dirs):
+    """{key: path stem} of every complete tree (all TREE_FILES present) under the given directories."""
+    idx = {}
+    for d in map(Path, dirs):
+        if not d.is_dir():
+            continue
+        for f in sorted(d.glob('*.nwk.key.json')):
+            stem = d / f.name[:-len('.nwk.key.json')]
+            if all(Path(f'{stem}{ext}').exists() for ext in TREE_FILES):
+                idx.setdefault(json.load(open(f))['key'], stem)
+    return idx
+
+
+def link_reusable(manifest, seqs, tree_dir, reuse_dirs, log=print):
+    """Hard-link into tree_dir, under the shard's own name, every earlier tree whose key is exactly this
+    shard's (the same sequences in the same order, recipe and tools: seqhesion.cache), wherever it was
+    built and whatever it was called: a cover redrawn after a few sequences were added keeps many shards
+    under other names. Tree files are never modified in place, so a link cannot change the source.
+    Returns how many trees were linked."""
+    from . import tools
+    idx = reuse_index(reuse_dirs)
+    td = Path(tree_dir)
+    td.mkdir(parents=True, exist_ok=True)
+    linked = 0
+    for ids, names in distinct_inputs(manifest).items():
+        name = names[0]
+        if Path(f'{td / name}.nwk.key.json').exists():
+            continue                                     # already here: cache.valid decides when building
+        src = idx.get(tools.build_key({i: seqs[i] for i in ids}, order=list(ids)))
+        if src is None:
+            continue
+        for ext in TREE_FILES:                           # the key sidecar last
+            tmp = Path(f'{td / name}{ext}.tmp')
+            if tmp.exists():
+                tmp.unlink()
+            os.link(f'{src}{ext}', tmp)
+            os.replace(tmp, f'{td / name}{ext}')
+        linked += 1
+    log(f'reuse: {linked} trees linked from {len(idx)} earlier ones')
+    return linked
+
+
+def build_trees(manifest, seqs, tree_dir, procs=6, log=print, reuse=()):
     """One tree per shard under tree_dir, reusing any whose key matches. Returns trees reused.
 
     Shards with the same input (ids in the same order; ids are content hashes, so the same
@@ -230,9 +309,9 @@ def build_trees(manifest, seqs, tree_dir, procs=6, log=print):
     import shutil
     from multiprocessing import Pool
     from . import cache
-    twins = {}
-    for name in manifest['shards']:
-        twins.setdefault(tuple(shard_input(manifest, name)), []).append(name)
+    if reuse:
+        link_reusable(manifest, seqs, tree_dir, reuse, log=log)
+    twins = distinct_inputs(manifest)
     jobs = [(names[0], list(ids), str(tree_dir)) for ids, names in twins.items()]
     reused = 0
     with Pool(procs, initializer=_init_seqs, initargs=(seqs,)) as pool:
@@ -255,3 +334,61 @@ def build_trees(manifest, seqs, tree_dir, procs=6, log=print):
     n = len(manifest['shards'])
     log(f'trees: {reused} reused, {n - reused - copied} built, {copied} copied from an identical shard')
     return reused
+
+
+def missing_trees(region_dirs, covers='covers', log=print):
+    """The trees the planned covers of these regions still need (not present with the right key): a
+    job list for build_jobs, one job per distinct tree input with every shard name it serves."""
+    from . import cache, tools
+    jobs = []
+    for rd in map(Path, region_dirs):
+        man = json.load(open(rd / covers / 'manifest.json'))
+        seqs = region_seqs(rd)
+        td = rd / covers / 'trees'
+        for ids, names in distinct_inputs(man).items():
+            key = tools.build_key({i: seqs[i] for i in ids}, order=list(ids))
+            if not cache.valid(td / f'{names[0]}.nwk', key, tips=list(ids)):
+                jobs.append({'region': rd.name, 'names': names, 'ids': list(ids)})
+    log(f'{len(jobs)} trees to build over {len(region_dirs)} regions')
+    return jobs
+
+
+def chunk_jobs(jobs, chunk, of):
+    """Chunk `chunk` of `of`: balanced by size squared (L-INS-i cost), largest first; deterministic."""
+    order = sorted(range(len(jobs)), key=lambda k: (-len(jobs[k]['ids']), jobs[k]['region'], jobs[k]['names'][0]))
+    load, mine = [0] * of, []
+    for k in order:
+        c = min(range(of), key=lambda i: (load[i], i))
+        load[c] += len(jobs[k]['ids']) ** 2
+        if c == chunk:
+            mine.append(jobs[k])
+    return mine
+
+
+def build_jobs(jobs, regions_root, covers='covers', chunk=0, of=1, procs=6, log=print):
+    """Build one chunk of a job list (missing_trees) under REGIONS_ROOT/<region>/<covers>/trees, then
+    give each tree's twins (other shard names with the same input) byte copies, as build_trees does."""
+    import shutil
+    from multiprocessing import Pool
+    mine = chunk_jobs(jobs, chunk, of)
+    root = Path(regions_root)
+    seqs = {}
+    for r in sorted({j['region'] for j in mine}):
+        seqs.update(region_seqs(root / r))
+    log(f'chunk {chunk}/{of}: {len(mine)} trees')
+    work = [(j['names'][0], j['ids'], str(root / j['region'] / covers / 'trees')) for j in mine]
+    for w in work:
+        Path(w[2]).mkdir(parents=True, exist_ok=True)
+    with Pool(procs, initializer=_init_seqs, initargs=(seqs,)) as pool:
+        for i, _ in enumerate(pool.imap_unordered(_tree_job, work), 1):
+            if i % 40 == 0:
+                log(f'  {i}/{len(work)} trees')
+    copied = 0
+    for j in mine:
+        td = root / j['region'] / covers / 'trees'
+        for twin in j['names'][1:]:
+            for ext in TREE_FILES:
+                shutil.copyfile(td / f"{j['names'][0]}{ext}", td / f'{twin}{ext}.tmp')
+                os.replace(td / f'{twin}{ext}.tmp', td / f'{twin}{ext}')
+            copied += 1
+    log(f'chunk {chunk}/{of}: {len(mine)} trees built, {copied} twins copied')

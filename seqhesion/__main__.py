@@ -4,7 +4,9 @@
   seqhesion intake       INPUT_DIR/sequences.fasta INTAKE_DIR
   seqhesion regions      INTAKE_DIR REGIONS_DIR          writes REGIONS_DIR/large.txt and small.txt
   seqhesion build        REGION_DIR --out HIERARCHY.json  (= cover + prepare + hierarchy)
-  seqhesion cover        REGION_DIR
+  seqhesion cover        REGION_DIR [--reuse OLD_REGIONS_DIR] [--plan-only]
+  seqhesion cover-trees-plan REGION_LIST JOBS.json        trees the planned covers still need
+  seqhesion cover-trees  JOBS.json REGIONS_ROOT [--chunk I --of N]   build them (e.g. an AWS array)
   seqhesion prepare      REGION_DIR/covers
   seqhesion hierarchy    REGION_DIR --out HIERARCHY.json
   seqhesion stem-nodes   REGION_DIR --hierarchy H.json --out H2.json   (stem nodes for an older hierarchy)
@@ -44,24 +46,34 @@ def cmd_regions(a):
 
 def cmd_cover(a):
     from . import cover
-    from .fasta import read_fasta
     rd = Path(a.region)
     cd = rd / a.covers
     cd.mkdir(exist_ok=True)
-    seqs = read_fasta(rd / 'comp.fasta')
-    own = set(seqs)
-    small = json.load(open(rd / 'region.json')).get('kind') == 'small'
-    nbrs = cover.load_knn(rd / 'knn.tsv')
-    if small:            # neighbours from the whole corpus; seeds only from the component's own tips
-        seqs.update(read_fasta(rd / 'context.fasta'))
-        nbrs = {t: [x for x in nbrs.get(t, []) if x != t] for t in sorted(own)}
-    ident = cover.load_identity(rd / 'knn.tsv') if a.quota else None
-    man = cover.plan(nbrs, own, cover.scaffold_of(rd / 'comp_cent_0.85.fasta'), 2, a.depth, a.size,
-                     a.quota, a.quota_id, ident, log=_log)
-    if small:
-        man = cover.as_context(man, own)
+    man, seqs = cover.plan_region(rd, a.depth, a.size, a.quota, a.quota_id, log=_log)
     json.dump(man, open(cd / 'manifest.json', 'w'))
-    cover.build_trees(man, seqs, cd / 'trees', a.procs, log=_log)
+    reuse = [str(Path(r) / rd.name / a.covers / 'trees') for r in a.reuse]
+    if getattr(a, 'plan_only', False):
+        if reuse:
+            cover.link_reusable(man, seqs, cd / 'trees', reuse, log=_log)
+        return
+    cover.build_trees(man, seqs, cd / 'trees', a.procs, log=_log, reuse=reuse)
+
+
+def cmd_cover_trees_plan(a):
+    """The trees the planned covers of the listed regions still need, as a job list (JSON) for
+    cover-trees: computed where the earlier trees are, so a remote chunk needs none of them."""
+    from . import cover
+    regs = [l.strip() for l in open(a.regions) if l.strip()]
+    jobs = cover.missing_trees(regs, a.covers, log=_log)
+    json.dump({'covers': a.covers, 'jobs': jobs}, open(a.out, 'w'))
+
+
+def cmd_cover_trees(a):
+    """One chunk of a cover-trees-plan job list (chunks are independent: an AWS array). Needs each
+    listed region's comp.fasta (+ context.fasta) under REGIONS_ROOT; writes its trees there."""
+    from . import cover
+    j = json.load(open(a.jobs))
+    cover.build_jobs(j['jobs'], a.regions_root, j['covers'], a.chunk, a.of, a.procs, log=_log)
 
 
 def cmd_prepare(a):
@@ -127,7 +139,7 @@ def cmd_sparse_build(a):
     from . import sparse
     rd = Path(a.region)
     if (rd / 'sparse' / 'manifest.json').exists():
-        sparse.build(rd, a.procs, log=_log)
+        sparse.build(rd, a.procs, log=_log, reuse=[str(Path(r) / rd.name / 'sparse' / 'trees') for r in a.reuse])
         return
     h = json.load(open(rd / a.hierarchy))
     _, members = sparse.units(h)
@@ -149,7 +161,7 @@ def cmd_corpus_trees(a):
     """Corpus levels, step 2: the trees of one chunk of the plan (chunks are independent: AWS array);
     with --round, only that verification round's shards."""
     from . import corpus
-    corpus.trees(a.out, a.chunk, a.of, a.procs, log=_log, round_=a.round)
+    corpus.trees(a.out, a.chunk, a.of, a.procs, log=_log, round_=a.round, reuse=a.reuse)
 
 
 def cmd_corpus_verify(a):
@@ -222,6 +234,9 @@ def main(argv=None):
 
     def cover_args(p):
         # always two covers, drawn independently; the hierarchy pools them (cross-cover twins once)
+        p.add_argument('--reuse', action='append', default=[], metavar='REGIONS_DIR',
+                       help="an earlier cycle's regions dir: any of its trees whose key is exactly a shard's is "
+                            "hard-linked (by content, whatever its shard name); repeatable")
         p.add_argument('--depth', type=int, default=3)
         p.add_argument('--size', type=int, default=150)
         p.add_argument('--quota', type=int, default=30,
@@ -234,7 +249,15 @@ def main(argv=None):
 
     p = add('cover', cmd_cover, 'region')
     p.add_argument('--covers', default='covers')
+    p.add_argument('--plan-only', action='store_true', help='write the plan (and link reusable trees), build nothing')
     cover_args(p)
+    p = add('cover-trees-plan', cmd_cover_trees_plan, 'regions')
+    p.add_argument('out')
+    p.add_argument('--covers', default='covers')
+    p = add('cover-trees', cmd_cover_trees, 'jobs')
+    p.add_argument('regions_root')
+    p.add_argument('--chunk', type=int, default=0)
+    p.add_argument('--of', type=int, default=1)
     add('prepare', cmd_prepare, 'covers_dir')
     p = add('hierarchy', cmd_hierarchy, 'region')
     p.add_argument('--covers', default='covers')
@@ -255,6 +278,8 @@ def main(argv=None):
     p = add('sparse-build', cmd_sparse_build, 'region')
     p.add_argument('--hierarchy', default='hierarchy.json')
     p.add_argument('--covers', default='covers')
+    p.add_argument('--reuse', action='append', default=[], metavar='REGIONS_DIR',
+                   help="an earlier cycle's regions dir: sparse trees whose key is exactly a shard's are hard-linked")
     p = add('corpus-plan', cmd_corpus_plan, 'intake', 'out')
     p.add_argument('regions', nargs='+')
     p.add_argument('--hierarchy', default='hierarchy.json')
@@ -264,6 +289,8 @@ def main(argv=None):
     p.add_argument('--chunk', type=int, default=0)
     p.add_argument('--of', type=int, default=1)
     p.add_argument('--round', type=int, help='only the shards of this verification round')
+    p.add_argument('--reuse', action='append', default=[], metavar='TREES_DIR',
+                   help="an earlier corpus plan's trees dir: trees whose key is exactly a shard's are hard-linked")
     p = add('corpus-verify', cmd_corpus_verify, 'out')
     p.add_argument('--round', type=int, required=True)
     p.add_argument('--intake', help="the intake dir, when the plan does not record it (plans before 2026-10-16)")

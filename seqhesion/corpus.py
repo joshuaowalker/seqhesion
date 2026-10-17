@@ -181,14 +181,14 @@ def chunk_names(manifest, chunk, of, round_=None):
     return mine
 
 
-def trees(out, chunk=0, of=1, procs=8, log=print, round_=None):
+def trees(out, chunk=0, of=1, procs=8, log=print, round_=None, reuse=()):
     """Build the trees of one chunk of the corpus plan into OUT/trees (cached; twins once)."""
     out = Path(out)
     man = json.load(open(out / 'manifest.json'))
     mine = chunk_names(man, chunk, of, round_)
     sub = dict(man, shards={n: man['shards'][n] for n in mine})
     log(f'chunk {chunk}/{of}: {len(mine)} shards')
-    cover.build_trees(sub, read_fasta(out / 'seqs.fasta'), out / 'trees', procs, log=log)
+    cover.build_trees(sub, read_fasta(out / 'seqs.fasta'), out / 'trees', procs, log=log, reuse=reuse)
 
 
 def layer(out, procs=8, log=print):

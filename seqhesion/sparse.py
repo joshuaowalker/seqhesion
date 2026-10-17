@@ -127,14 +127,14 @@ def plan(region_dir, h, outgroup, outgroup_seqs, size=SIZE, pair_votes=PAIR_VOTE
     return K
 
 
-def build(region_dir, procs=8, log=print):
+def build(region_dir, procs=8, log=print, reuse=()):
     """Trees for a planned region's sparse shards (REGION/sparse/trees, coassoc/), then its layer."""
     rd = Path(region_dir)
     sd = rd / 'sparse'
     man = json.load(open(sd / 'manifest.json'))
     seqs = read_fasta(rd / 'comp.fasta')
     seqs.update(read_fasta(sd / 'outgroup.fasta'))
-    cover.build_trees(man, seqs, sd / 'trees', procs, log=log)
+    cover.build_trees(man, seqs, sd / 'trees', procs, log=log, reuse=reuse)
     shardtrees.export(sd, 0, procs, log=log)
     u = json.load(open(sd / 'units.json'))
     _, lines, widths = shardtrees.read(sd, 0)
