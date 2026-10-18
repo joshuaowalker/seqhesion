@@ -163,10 +163,10 @@ A release directory holds:
 
 | file | contents |
 | --- | --- |
-| `manifest.json` | schema (`seqhesion-release/0.7`), seqhesion commit, input fingerprint, method, levels, counts, and the columns of every table |
+| `manifest.json` | schema (`seqhesion-release/0.8`), seqhesion commit, input fingerprint, method, levels, counts, and the columns of every table |
 | `inputs.tsv` | every input: its tip, and whether it was built, not built, or dropped (with its intake class) |
 | `tips.tsv`, `tips.fasta` | every tip of a built component, with its extracted, oriented full-ITS sequence |
-| `groups.tsv` | one row per distinct group or stem node: size, level range, parent, cohesion, pull, margin, stem, spread, nearest group, shard verdicts, and its node in the dendrogram |
+| `groups.tsv` | one row per distinct group or stem node: size, level range, parent, cohesion, pull, margin, stem, spread (widest and median pair distance), identity, nearest group, shard verdicts, the votes behind its merge and its weakest merge, and its node in the dendrogram |
 | `group_levels.tsv`, `group_members.tsv` | a group's evidence at each level; its tips |
 | `membership.tsv` | per tip and level: its group, how firmly it belongs, its strongest outside pull |
 | `placements.tsv` | every ITS2-only input: placed (its group and level, the join, the shards behind it) or why not |

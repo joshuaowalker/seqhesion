@@ -12,6 +12,7 @@
   seqhesion stem-nodes   REGION_DIR --hierarchy H.json --out H2.json   (stem nodes for an older hierarchy)
   seqhesion sparse-plan  INTAKE_DIR REGION_DIR ...       coarse layer (levels 0.125 ...)
   seqhesion sparse-build REGION_DIR
+  seqhesion sparse-spread REGION_DIR                 add coarse groups' spread to an older layer
   seqhesion corpus-plan  INTAKE_DIR CORPUS_DIR REGION_DIR ...   corpus levels (0.4, 0.5, 0.75)
   seqhesion corpus-trees CORPUS_DIR [--chunk I --of N]
   seqhesion corpus-layer CORPUS_DIR
@@ -165,17 +166,28 @@ def cmd_sparse_build(a):
     its local trees (small components, and large ones with fewer than 3 units)."""
     from . import sparse
     rd = Path(a.region)
-    if (rd / 'sparse' / 'manifest.json').exists():
-        sparse.build(rd, a.procs, log=_log, reuse=[str(Path(r) / rd.name / 'sparse' / 'trees') for r in a.reuse])
-        return
     h = json.load(open(rd / a.hierarchy))
-    _, members = sparse.units(h)
-    if len(members) < 2:
-        (rd / 'sparse').mkdir(exist_ok=True)
-        sparse._write(rd / 'sparse' / 'layer.json', sparse.empty_layer(h))
-        _log(f'{rd.name}: one unit, empty layer')
-        return
-    sparse.build_local(rd, h, a.covers, a.procs, log=_log)
+    if (rd / 'sparse' / 'manifest.json').exists():
+        layer = sparse.build(rd, a.procs, log=_log, reuse=[str(Path(r) / rd.name / 'sparse' / 'trees') for r in a.reuse])
+    else:
+        _, members = sparse.units(h)
+        if len(members) < 2:
+            (rd / 'sparse').mkdir(exist_ok=True)
+            sparse._write(rd / 'sparse' / 'layer.json', sparse.empty_layer(h))
+            _log(f'{rd.name}: one unit, empty layer')
+            return
+        layer = sparse.build_local(rd, h, a.covers, a.procs, log=_log)
+    sparse._write(rd / 'sparse' / 'layer.json', sparse.add_spread(rd, h, layer, a.covers, a.procs, log=_log))
+
+
+def cmd_sparse_spread(a):
+    """Add the spread of every coarse group (sparse.add_spread, from the local trees) to an existing
+    REGION/sparse/layer.json, built before sparse-build computed it."""
+    from . import sparse
+    rd = Path(a.region)
+    lj = rd / 'sparse' / 'layer.json'
+    layer = json.load(open(lj))
+    sparse._write(lj, sparse.add_spread(rd, json.load(open(rd / a.hierarchy)), layer, a.covers, a.procs, log=_log))
 
 
 def cmd_corpus_plan(a):
@@ -309,6 +321,9 @@ def main(argv=None):
     p.add_argument('--covers', default='covers')
     p.add_argument('--reuse', action='append', default=[], metavar='REGIONS_DIR',
                    help="an earlier cycle's regions dir: sparse trees whose key is exactly a shard's are hard-linked")
+    p = add('sparse-spread', cmd_sparse_spread, 'region')
+    p.add_argument('--hierarchy', default='hierarchy.json')
+    p.add_argument('--covers', default='covers')
     p = add('corpus-plan', cmd_corpus_plan, 'intake', 'out')
     p.add_argument('regions', nargs='+')
     p.add_argument('--hierarchy', default='hierarchy.json')

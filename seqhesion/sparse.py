@@ -164,6 +164,39 @@ def build_local(region_dir, h, covers='covers', procs=8, log=print):
     return layer
 
 
+def add_spread(region_dir, h, layer, covers='covers', procs=8, log=print):
+    """Spread of every coarse group of 2+ units, measured as for fine groups (hierarchy.build): its
+    widest and median tip-to-tip distance, each pair's patristic distance being the median over the
+    component's LOCAL shard trees that hold it, over observed pairs only. Adds 'spread' and
+    'spread_median' to each group in layer['levels'], and returns the layer. The local shards hold
+    mostly near pairs, so in a large component a wide coarse group's spread can understate its
+    widest pair; its spread_median then leans to its close pairs."""
+    from .hierarchy import pooled_trees
+    tips = [t['id'] for t in h['tips']]
+    unit = np.array(layer['unit_of_tip'])
+    assert len(unit) == len(tips), (len(unit), len(tips))
+    if not any(L['groups'] for L in layer['levels']):
+        return layer
+    n = len(tips)
+    members = collections.defaultdict(list)
+    for i, u in enumerate(unit.tolist()):
+        members[u].append(i)
+    _, _, _, lines, widths = pooled_trees(Path(region_dir) / covers)
+    keys, dist, _, _ = consensus_levels(lines, widths, {t: i for i, t in enumerate(tips)}, procs, 'patristic')
+    ki, kj = keys // n, keys % n
+    for L in layer['levels']:
+        for g in L['groups']:
+            inside = np.zeros(n, bool)
+            inside[[i for u in g['units'] for i in members[u]]] = True
+            w = dist[inside[ki] & inside[kj]]
+            g['spread'] = rnd(float(w.max()), 4) if len(w) else None
+            g['spread_median'] = rnd(float(np.median(w)), 4) if len(w) else None
+    layer['spread'] = (f'spread / spread_median: patristic distance, median over {len(lines)} local shard trees, '
+                       'observed pairs only')
+    log(f'spread: {sum(len(L["groups"]) for L in layer["levels"])} coarse groups over {len(keys):,} observed pairs')
+    return layer
+
+
 def _write(path, obj):
     json.dump(obj, open(f'{path}.tmp', 'w'), separators=(',', ':'))
     Path(f'{path}.tmp').replace(path)
@@ -241,7 +274,8 @@ def add_layer(h, layer, max_level=None):
     units (layer evidence), plus every unit of 2+ tips still alone (the same node as its fine group,
     continuing); per tip, its unit's membership and pull. A node continuing from the fine levels
     keeps its fine measurement (kmax) and gains kmax_top, its coarsest level; nodes born in the
-    layer carry no tree-level evidence (stem, spread, nearest, verdicts: None). With max_level,
+    layer carry no tree-level evidence (stem, nearest, verdicts: None) except their spread, when the
+    layer has it (add_spread: from the local trees). With max_level,
     only the coarse levels up to it (the corpus levels take over above: seqhesion.corpus), and
     the dendrogram stops there too (a forest of the groups at max_level)."""
     if max_level is not None:
@@ -281,7 +315,8 @@ def add_layer(h, layer, max_level=None):
                 nd = len(h['nodes'])
                 node_of[key] = nd
                 h['nodes'].append({'kmin': k_level, 'kmax': k_level, 'layer': True, 'shards': [], 'verdicts': None,
-                                   'stem': None, 'stem_n': 0, 'spread': None, 'spread_median': None, 'nearest': None,
+                                   'stem': None, 'stem_n': 0, 'spread': lg.get('spread') if lg else None,
+                                   'spread_median': lg.get('spread_median') if lg else None, 'nearest': None,
                                    'second': None, 'stray': None, 'strays_closer': None, 'gap': None})
             groups.append({'id': gid, 'tips': tt, 'node': nd,
                            'cohesion': lg['cohesion'] if lg else None, 'votes': lg['votes'] if lg else 0,

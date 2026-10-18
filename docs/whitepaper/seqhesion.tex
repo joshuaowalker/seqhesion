@@ -677,7 +677,7 @@ changed about a third of alignments, which is why the reference on Linux is a cl
 multiply-adds (see Cross-platform equivalence above).
 
 \paragraph{Releases.}
-A release is a set of TSV tables and a JSON manifest with a versioned schema (currently 0.7). It
+A release is a set of TSV tables and a JSON manifest with a versioned schema (currently 0.8). It
 contains:
 \begin{itemize}
   \item every input and its status: built, not built, or dropped with its intake class;
@@ -929,7 +929,13 @@ apart for lack of evidence rather than because of evidence against them. The \em
 When a tree is a star around one central sequence, every pair across two arms of the star has the
 star as its smallest common clade, and joins at the star's full width. In one 103-tip component
 this put a group's formation at 0.13. Neither root choice changes it; it is a property of the
-clade-diameter join and remains open.
+clade-diameter join. A broad clade with a dozen scattered divergent members does the same: in one
+147-tip group every pair across its four parts at 0.1 joined at the clade's width, 0.104, though
+its typical pair was 0.025 apart, so the group formed at 0.125. By the definition of a level as
+the widest pair, that is its level. Every group, coarse ones included, therefore reports its spread
+(widest and median pairwise tree distance), so a curator can see a broad group whose members are
+mostly close: a median spread well below the level. Its sequence identity (lowest and median) is
+reported too, for readers, on its own scale.
 
 \paragraph{Correlated evidence.}
 Overlapping shards share sequences, alignments and the inference pipeline. Bootstrap resampling of

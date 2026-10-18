@@ -9,8 +9,8 @@ fine ones in every table. No labels anywhere.
 
 Coarse levels (> 0.1): the units are the fine groups at 0.1 (and lone tips). A coarse group of
 2+ units is a new group: cohesion / votes / pull / margin / held count UNIT-PAIR votes from the
-sparse shards (held = share of its unit pairs observed); stem, spread, identity, nearest and the
-verdict counts are empty (no tree-level evidence for it). A fine group still alone at a coarse
+sparse shards (held = share of its unit pairs observed); stem, nearest and the verdict counts are
+empty (no tree-level evidence for it); spread and identity are filled from schema 0.8 on. A fine group still alone at a coarse
 level is the same group continuing: its groups.tsv row keeps its fine-level evidence, level_max
 reaches its coarsest level, and its group_levels.tsv rows there carry only pull (no unit pairs
 inside it). membership.tsv at a coarse level gives each tip its unit's values (partners empty).
@@ -45,6 +45,16 @@ subtree holds a merge seen by one or two trees is only as good as that merge, wh
 which pools every vote in the group). dendrogram/*.merges.tsv gains votes (layer rows only). The
 corpus layer is verified (seqhesion.corpus: thin merges get more shards with random context) and
 counts a unit pair on fewer than 3 votes as unobserved.
+
+0.8 (2026-10-18): a group born in the coarse layer (levels 0.125 ... 0.3) gains spread,
+spread_median, identity_min and identity_median, measured as for fine groups: spread from the
+component's local shard trees (patristic distance, median over the shards holding the pair,
+observed pairs only; local shards hold mostly near pairs, so in a large component a wide group's
+spread can understate its widest pair), identity over every pair of its tips. So a group that forms at a coarse level
+only because a few members are far apart, while most pairs are close, shows a spread_median well
+below its level (both tree distances). Identity is reported for readers on its own scale and is
+never compared with levels or spreads. Corpus groups (0.4 ...) still have none: local trees
+never pair tips of different components.
 
   manifest.json    schema, seqhesion commit, the input (directory + fingerprint), method, levels,
                    components built, counts, and the columns of every table
@@ -111,7 +121,7 @@ import numpy as np
 from . import lineage, place
 from .fasta import read_fasta, write_fasta
 
-SCHEMA = 'seqhesion-release/0.7'
+SCHEMA = 'seqhesion-release/0.8'
 COLUMNS = {
     'inputs.tsv': ['input_id', 'tip_id', 'status', 'component'],
     'tips.tsv': ['tip_id', 'component', 'n_inputs', 'seen', 'part'],
@@ -244,11 +254,25 @@ def pairwise_identity(seqs, threads=8):
     return out
 
 
+def pairwise_identity_arrays(seqs, threads=8):
+    """(I, J, identity) arrays over every pair of `seqs` (a list; I, J index into it), vsearch global:
+    pairwise_identity without a dict, for groups of thousands of tips."""
+    if len(seqs) < 2:
+        return np.zeros(0, np.int32), np.zeros(0, np.int32), np.zeros(0, np.float32)
+    with tempfile.TemporaryDirectory() as d:
+        write_fasta(f'{d}/in.fasta', {str(k): x for k, x in enumerate(seqs)})
+        subprocess.run(['vsearch', '--allpairs_global', f'{d}/in.fasta', '--acceptall', '--iddef', '2', '--threads', str(threads),
+                        '--userout', f'{d}/out.tsv', '--userfields', 'query+target+id', '--quiet'],
+                       stderr=subprocess.DEVNULL, check=True)
+        a = np.loadtxt(f'{d}/out.tsv', dtype=np.float64, ndmin=2)
+    return a[:, 0].astype(np.int32), a[:, 1].astype(np.int32), (a[:, 2] / 100).astype(np.float32)
+
+
 def identities(h, tips, seqs, threads=8, log=print):
-    """Per node: (min, median) pairwise identity over its tips. Pairs are aligned within each
-    group of the coarsest FINE level only (a coarse level above it would mean all pairs of a whole
-    component); every fine node lies inside one of those, and a node born in the coarse layer
-    (sparse.add_layer) gets (None, None)."""
+    """Per node: (min, median) pairwise identity over its tips. For fine nodes, pairs are aligned
+    within each group of the coarsest FINE level, and every fine node lies inside one of those.
+    Nodes born in the coarse layer (sparse.add_layer) likewise: pairs aligned within each group of
+    the coarsest layer level. Exact for every node: every pair of its tips."""
     top = [lv for lv in h['levels'] if not lv.get('layer')][-1]
     node_of_top = {}
     res = {}
@@ -264,13 +288,30 @@ def identities(h, tips, seqs, threads=8, log=print):
             continue
         for g in lv['groups']:
             tips_of_node[g['node']] = g['tips']
-    res.update({k: (None, None) for k, nd in enumerate(h['nodes']) if nd.get('layer')})
     for node, tt in tips_of_node.items():
         ids, ident = node_of_top[top_of_tip[tt[0]]]
         names = sorted(tips[t] for t in tt)
         v = [ident[(a, b)] for i, a in enumerate(names) for b in names[i + 1:]]
         res[node] = (min(v), float(np.median(v))) if v else (None, None)
-    log(f'identity: {len(res)} groups, {sum(len(x[1]) for x in node_of_top.values()):,} pairs aligned')
+    aligned = sum(len(x[1]) for x in node_of_top.values())
+    # nodes born in the coarse layer, the same way: every pair aligned once within each group of the
+    # coarsest layer level, and every coarse node (each lies inside one of those) read from them
+    layer_lvs = [lv for lv in h['levels'] if lv.get('layer')]
+    layer_tips = {g['node']: g['tips'] for lv in layer_lvs for g in lv['groups'] if h['nodes'][g['node']].get('layer')}
+    for g in (layer_lvs[-1]['groups'] if layer_lvs else []):
+        if g['node'] not in layer_tips:
+            continue
+        pos = {t: k for k, t in enumerate(g['tips'])}
+        I, J, V = pairwise_identity_arrays([seqs[tips[t]] for t in g['tips']], threads)
+        aligned += len(V)
+        for node, tt in layer_tips.items():
+            if tt[0] in pos:
+                inside = np.zeros(len(pos), bool)
+                inside[[pos[t] for t in tt]] = True
+                v = V[inside[I] & inside[J]]
+                res[node] = (float(v.min()), float(np.median(v))) if len(v) else (None, None)
+    res.update({k: (None, None) for k, nd in enumerate(h['nodes']) if nd.get('layer') and k not in res})
+    log(f'identity: {len(res)} groups, {aligned:,} pairs aligned')
     return res
 
 
