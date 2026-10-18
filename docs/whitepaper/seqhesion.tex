@@ -29,7 +29,7 @@
 from many small overlapping trees\\[0.5ex]
 \large Draft}
 \author{Josh Walker\\ \small Independent Researcher \and Claude Code\\ \small (Claude Opus 5.5, Anthropic)}
-\date{Draft of 6 October 2026}
+\date{Draft of 18 October 2026}
 
 \begin{document}
 \maketitle
@@ -49,8 +49,8 @@ resampled (AUC 0.94). Coarser structure comes from separate layers of stratified
 first within each connected component and then across components. Group identities
 (\emph{antenomina}) persist across releases by a mutual-best-match rule, and partial ITS2-only
 sequences are placed onto the stored shard alignments without changing the hierarchy. On a corpus
-of 225,876 input sequences, drawn mainly from MycoMap with other sources (146,875 distinct full-ITS sequences in 4,172 components),
-\seqhesion{} produced 50,847 fine-level groups with per-group confidence. It is an evidence layer
+of 225,985 input sequences, drawn mainly from MycoMap with other sources (146,946 distinct full-ITS sequences in 4,174 components),
+\seqhesion{} produced 51,269 fine-level groups with per-group confidence. It is an evidence layer
 and a navigation aid for curators, not a phylogeny. This paper describes the method, the choices
 behind it and their limits, and the in-house experiments that support them.
 \end{abstract}
@@ -216,16 +216,16 @@ re-inference while the stored trees, and so the hierarchy, stay unchanged
   \node[box, below=of intake] (comp) {\textbf{Components}: 90\% centroids linked at a fixed
       identity; each connected component built independently};
   \node[box, below=of comp] (cover) {\textbf{Covers}: shards = seed + 149 nearest neighbours,
-      $\ge$30 members below 97\% identity to the seed, plus a rooting scaffold; 2 covers of depth 3};
+      $\ge$30 members below 97\% identity to the seed, plus a shared scaffold; 2 covers of depth 3};
   \node[box, below=of cover] (trees) {\textbf{Shard trees}: MAFFT L-INS-i, trimAl -gappyout,
-      FastTree -gtr -gamma; root on scaffold, prune scaffold, collapse branches $<0.5$ expected change};
+      FastTree -gtr -gamma; prune scaffold and context, root at the midpoint, collapse branches $<0.5$ expected change};
   \node[box, below=of trees] (coassoc) {\textbf{Co-association}: per pair, median over shards of
       the smallest-clade diameter; average linkage over observed pairs only;
       fine levels 0.005--0.1 with cohesion, pull, margin};
   \node[box, below=of coassoc] (coarse) {\textbf{Coarse layer} (per component): units = groups at 0.1;
       stratified sparse shards; levels 0.125--0.3};
   \node[box, below=of coarse] (corpus) {\textbf{Corpus layer} (across components): super-units =
-      groups at 0.3; levels 0.4, 0.5, 0.75};
+      groups at 0.3; thin merges verified by further shards; levels 0.4, 0.5, 0.75};
   \node[box, below=of corpus] (rel) {\textbf{Release}: TSV tables + JSON manifest, dendrograms,
       antenomina carried by lineage matching};
   \node[side, right=6mm of intake] (its2) {\textbf{ITS2-only inputs}: set aside at intake};
@@ -270,13 +270,16 @@ Shards & 150 sequences (seed + 149 nearest); top-up to $\ge$ 30 members below 97
 Covers & 2 independent covers, each sequence in $\ge$ 3 shards per cover \\
 Trees & \texttt{mafft --localpair --maxiterate 1000 --thread 1}; \texttt{trimal -gappyout};
         \texttt{FastTree -gtr -gamma -nt} \\
-Tree preparation & root on the scaffold tip farthest from the members; prune scaffold; collapse
-        internal branches $< 0.5/W$ ($W$ = trimmed alignment width) \\
+Tree preparation & prune scaffold and context; root the members' tree at its midpoint (coarse and
+        corpus shards: on their outgroup or context, then prune); collapse internal branches
+        $< 0.5/W$ ($W$ = trimmed alignment width) \\
 Fine levels & 0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075, 0.1 (substitutions/site, clade diameter) \\
 Coarse layer & units at 0.1; 150 units per sparse shard; $\approx$24 expected shards per unit pair;
         8 outgroup sequences; levels 0.125, 0.15, 0.2, 0.25, 0.3 \\
 Corpus layer & super-units at 0.3; 3 representatives per unit, neighbour identity floor 50\%;
-        150 units per shard + 20 context units; 2 covers of depth 6; levels 0.4, 0.5, 0.75 \\
+        150 units per shard + 20 context units; 2 covers of depth 6; levels 0.4, 0.5, 0.75;
+        merges on $<3$ votes verified by 8 more shards per round, until none remain; unit pairs on
+        $<3$ votes unobserved \\
 Antenomina & mutual best match by Jaccard over shared inputs, $J > 1/2$ \\
 \bottomrule
 \end{tabularx}
@@ -309,10 +312,11 @@ The dereplicated tips are clustered into 90\% centroids (vsearch \texttt{--clust
 independently. The centroids only locate components. They never define groups.
 
 Many components are small. In the production corpus, 44\% of tips lie in components of fewer than
-150 tips, the size of one shard. Built alone, such a component could only be rooted on one of its
-own tips. Instead, its tips draw their nearest neighbours from the whole corpus (identity floor
-60\%), and these outside sequences serve only as rooting context. They are present in the tree,
-pruned before co-association, and never grouped. A lab test found that 0\% of small-component tips
+150 tips, the size of one shard. Their tips also draw their nearest neighbours from the whole
+corpus (identity floor 60\%). These outside sequences were introduced as rooting context; since
+local trees are rooted at the members' midpoint (Section~\ref{sec:trees}) they serve only as
+context in the alignment and tree. They are pruned before rooting and co-association, and never
+grouped. A lab test found that 0\% of small-component tips
 joined another component's tips at levels up to 0.075, so the pruning loses no grouping evidence.
 Singletons and components with no usable neighbour get no tree.
 
@@ -332,9 +336,9 @@ Two refinements matter in practice.
         shard is therefore topped up so that at least 30 of its members are below 97\% identity to
         the seed. Identity here decides only what is \emph{sampled}.
   \item \textbf{Scaffold.} Every shard also contains a fixed scaffold: the 30 most abundant 85\%
-        centroids of the component. The scaffold provides rooting candidates and is pruned before
-        any co-association is counted, since it sits in every shard and would otherwise link
-        everything.
+        centroids of the component. It is pruned before rooting and before any co-association is
+        counted, since it sits in every shard and would otherwise link everything. (It was
+        introduced to provide rooting candidates; see Section~\ref{sec:trees}.)
 \end{itemize}
 
 Two covers are drawn independently. In dense neighbourhoods they often draw exactly the same
@@ -349,14 +353,24 @@ single-threaded for determinism. The alignment is trimmed with trimAl \texttt{-g
 \citep{capella2009trimal}, and a tree is inferred with FastTree under GTR with gamma-distributed
 rates \citep{price2010fasttree}. Each tree is then prepared as follows.
 \begin{enumerate}
-  \item It is rooted on the scaffold tip farthest from the members (by mean patristic distance to
-        the first 40 members).
-  \item The scaffold is pruned.
+  \item The scaffold and any context sequences are pruned.
+  \item The members' own tree is rooted at its midpoint (a tree of two members is left as it is).
   \item Internal branches shorter than $0.5/W$ substitutions per site are collapsed into
         polytomies. Here $W$ is the trimmed alignment width, so the threshold is about half an
         expected change. Branches this short carry no resolvable signal, and FastTree resolves
         them arbitrarily.
 \end{enumerate}
+The root matters because the join level of Section~\ref{sec:coassoc} is the diameter of the
+smallest clade holding a pair, and clades depend on the root. Releases up to 17 October 2026
+rooted each tree on the scaffold tip farthest from the members, before pruning. In a large
+component the scaffold is the component's own most abundant centroids, sometimes only one or two.
+The root then fell inside a dense cluster of near-identical sequences, which became a grade with
+its relatives nested inside it, and pairs across the root joined at nearly the whole tree's width.
+Outgroups from outside the component failed in a different way: a distant outgroup attached inside
+a dense cluster. Midpoint rooting of the members' own tree avoids both
+(Section~\ref{sec:res-rooting}). Coarse-layer and corpus shards hold one member per unit, so no
+dense cluster can capture their root; they keep rooting on their outgroup or context sequences,
+which are then pruned.
 
 \subsection{Co-association and the fine hierarchy}\label{sec:coassoc}
 
@@ -483,7 +497,8 @@ component, average linkage on local shards alone chained to 5 groups at 0.2 and 
   \item \textbf{Units} are the fine groups at 0.1 and the tips that are in no group there.
   \item \textbf{Sparse shards} are stratified. Each holds one random member of each of 150 randomly
         chosen units, so every unit pair is equally likely to meet. Each also holds a fixed outgroup
-        of 8 sequences from outside the component, used for rooting and then pruned. Enough shards
+        of 8 sequences from outside the component, used for rooting and then pruned (one member per
+        unit leaves no dense cluster for the root to fall into). Enough shards
         are drawn that each unit pair is expected in about 24 of them. They are aligned, trimmed,
         inferred and prepared exactly like local shards.
   \item \textbf{The layer.} Each sparse shard's join level for a pair of tips in different units is
@@ -521,6 +536,16 @@ hierarchies relates them. The corpus layer does, with the same machinery one lev
         as rooting context and pruned afterwards.
   \item \textbf{Layer.} Unit-pair median join levels and observed-pair average linkage, as in the
         coarse layer, cut at 0.4, 0.5 and 0.75. Units nothing connects stay a forest.
+  \item \textbf{Verification.} At corpus distances representative identity barely ranks relatives,
+        so some unit pairs meet in only one or two trees, by chance, and a merge can rest on such a
+        pair. Every merge at or below 0.75 whose cross unit pairs hold fewer than 3 votes in all is
+        therefore verified: up to 4 of its cross unit pairs go into 8 more shards, filled with
+        random corpus units as context that is pruned before votes, so only the target pairs vote.
+        The layer is rebuilt, and rounds repeat until no merge is thin. A unit pair still on fewer
+        than 3 votes then counts as unobserved.
+  \item \textbf{Weakest link.} Every coarse and corpus group reports the votes behind its own merge
+        and the smallest such count in its subtree, so a group resting on a thin join anywhere
+        below it is visible.
 \end{itemize}
 The levels stop at 0.75 because two independent draws stopped agreeing above it
 (Section~\ref{sec:res-corpus}). A corpus group can span several components; a component's top
@@ -565,7 +590,9 @@ ITS2-only inputs never shape the hierarchy. They are placed onto it through the 
 \end{enumerate}
 As a diagnostic, \seqhesion{} records whether a re-inference rearranged the query's surroundings
 relative to the stored tree. The same path, with \texttt{--add}, places new full-ITS sequences
-incrementally (Section~\ref{sec:res-placement}).
+incrementally (Section~\ref{sec:res-placement}). In production the re-inferences are planned once
+(one job per query and shard) and run as independent chunks; the release then reduces their
+join levels to placements.
 
 % =====================================================================================
 \section{Implementation and reproducibility}\label{sec:impl}
@@ -630,6 +657,8 @@ time on eight instances, and under US\$10 of on-demand compute. The remaining st
 workstation: the hierarchy of the largest component (1{,}616 distinct trees) takes under five
 minutes, and writing the full release about 13 minutes. The cache holds about 560\,KB per tree.
 Because trees are cached by content, a later build only builds shards whose members changed.
+Placing the 18,583 placeable ITS2-only inputs of the current release took 100,347 shard
+re-inferences, 11.5 job-hours on the same instances.
 
 \paragraph{Optimised MAFFT.}
 Because alignment dominates, a faster MAFFT pays off directly. We used optimised builds of MAFFT
@@ -648,14 +677,15 @@ changed about a third of alignments, which is why the reference on Linux is a cl
 multiply-adds (see Cross-platform equivalence above).
 
 \paragraph{Releases.}
-A release is a set of TSV tables and a JSON manifest with a versioned schema (currently 0.6). It
+A release is a set of TSV tables and a JSON manifest with a versioned schema (currently 0.7). It
 contains:
 \begin{itemize}
   \item every input and its status: built, not built, or dropped with its intake class;
   \item tips with their extracted sequences;
   \item groups with their evidence, and per-level evidence;
   \item group membership, and per-tip membership and pull at each level;
-  \item ITS2 placements (the table exists; corpus-scale placement is pending, Section~\ref{sec:res-placement});
+  \item ITS2 placements: every ITS2-only input, placed (its group, level and join) or why not;
+  \item for every coarse and corpus group, the votes behind its merge and its weakest merge;
   \item the lineage log and a register of every id ever minted;
   \item Newick dendrograms (per component, and one corpus-wide tree in which every group at every
         level is a clade);
@@ -668,7 +698,8 @@ No table contains a label.
 
 All results in this section come from in-house (``lab'') experiments run during development,
 mostly on one production corpus. They are internal measurements, not peer-reviewed benchmarks.
-Name comparisons appear only as sanity checks: no parameter was tuned to them.
+Name comparisons appear only as sanity checks: no parameter was tuned to them. Except where
+Section~\ref{sec:res-rooting} says otherwise, the experiments predate midpoint rooting.
 
 \subsection{Production corpus}\label{sec:res-scale}
 
@@ -678,19 +709,20 @@ Name comparisons appear only as sanity checks: no parameter was tuned to them.
 \label{tab:scale}
 \begin{tabular}{@{}lr@{}}
 \toprule
-Input sequences & 225,876 \\
-\quad ITS2-only (not built; placement pending) & 19,583 \\
-Distinct full-ITS tips & 146,875 \\
-Components built & 4,172 \\
-Fine groups (levels 0.005--0.1) & 50,847 \\
-Coarse groups (levels 0.125--0.3) & 3,865 \\
-Super-units for the corpus layer & 4,813 \\
-Corpus groups (levels 0.4--0.75) & 1,619 \\
+Input sequences & 225,985 \\
+\quad ITS2-only (not built; placed on the hierarchy) & 19,589 (18,580 placed) \\
+Distinct full-ITS tips & 146,946 \\
+Components built & 4,174 \\
+Fine groups (levels 0.005--0.1) & 51,269 \\
+Stem nodes (between levels) & 17,767 \\
+Coarse groups (levels 0.125--0.3) & 3,917 \\
+Super-units for the corpus layer & 4,769 \\
+Corpus groups (levels 0.4--0.75) & 1,603 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:scale} summarises the current corpus. The largest component, a
+Table~\ref{tab:scale} summarises the current corpus (release 20261018.01f). The largest component, a
 \emph{Cortinariaceae} component of 8,806 tips, is the test bed for the coarse layer below. In the
 release with pooled covers and pooled pull, negative margins were rare: 0.6\%, 0.2\%, 0.2\% and 0\%
 of groups of 2--5, 6--20, 21--199 and 200+ tips.
@@ -729,6 +761,24 @@ cohesion alone & 0.80 & 0.72 & 0.61 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\subsection{Rooting of local shards}\label{sec:res-rooting}
+
+Curators asked why some groups of near-identical sequences formed only at 0.125. In a 489-tip
+\emph{Hygrocybe} component with a one-tip scaffold, the root fell inside the near-identical cluster
+in 75 of 76 trees, and its cross-root pairs joined at a median of 0.124 against a patristic
+distance of 0.008. The same trees rooted at the midpoint gave 0.030; nothing else moved. We
+compared both roots on the existing trees of seven large components: four with such reports, a
+775-tip \emph{Trametes} component, and two controls with five or more scaffold tips. Midpoint
+rooting cut the coarse-layer merges below 0.1 in the four reported components from 48, 31, 23
+and 14 to 1, 0, 3 and 0, and three of the four groups now form at 0.02--0.05. The fourth is only
+partly mended: 90 of its 146 tips share a group at 0.1 (53 before), but the whole still forms at
+0.125. The controls were unchanged (ARI about 1.0), as was \emph{Trametes} (ARI $\ge$ 0.99 at
+every level but 0.1, at 0.69). Rooting on 8 outgroups from outside the component instead also
+mended the four reported cases, but in \emph{Trametes} the outgroup attached inside a dense
+cluster in all 102 trees and fragmented it (24 to 72 groups at 0.05). Across the corpus,
+coarse-layer merges below 0.1 in large components fell from 855 to 519 with midpoint rooting.
+Not all of these are rooting: sparse shards sample a component differently from local ones.
 
 \subsection{The coarse layer}\label{sec:res-coarse}
 
@@ -805,8 +855,20 @@ The two plans agree about as well as the lab draws did, with fewer votes per pai
 falls with height as it should: the 0.75 level is the least certain and is reported as such through
 each group's margin (median 0.53, 0.49 and 0.41 at the three levels). As a sanity check only, over
 the 174 families with at least 30 tips the mean best-node F1 was 0.92 in both plans against 0.66
-with components kept apart; over 446 genera, 0.89 against 0.76. In the release, 1,587 of the 1,619
-corpus groups span more than one component.
+with components kept apart; over 446 genera, 0.89 against 0.76. In release 20261018.01f, 1,572 of
+the 1,603 corpus groups span more than one component.
+
+\paragraph{Verification.}
+Curators reported a few corpus groups that joined clades of different orders. Each rested on a
+bridge unit pair seen by one or two corpus trees. Deeper covers did not cure this: at depth 24
+(4.6 times the trees) 41\% of such pairs still had two votes or fewer. Over the whole corpus,
+verification rounds (Section~\ref{sec:corpus}) reduced thin merges from 157 to 84, 49, 12, 6, 1
+and 0 over six rounds (124 extra trees), and the layer stayed close to the unverified one (ARI
+0.995, 0.965 and 0.975 at 0.4, 0.5 and 0.75); every reported case came apart. In the current
+release the rounds went from 96 to 1 thin merge after six rounds, and that one did not clear in
+four more: a two-sequence component whose weak joins move to a new partner each round. With the
+3-vote minimum it joins nothing below 0.95, so no merge at or below 0.75 in the release rests on
+fewer than 3 votes.
 
 \subsection{Placement of ITS2-only sequences}\label{sec:res-placement}
 
@@ -863,6 +925,12 @@ shapes what evidence exists. A pair no shard holds contributes nothing, so two c
 apart for lack of evidence rather than because of evidence against them. The \emph{held} and
 \emph{observed} counts make this visible, but they do not remove it.
 
+\paragraph{Star-shaped clusters.}
+When a tree is a star around one central sequence, every pair across two arms of the star has the
+star as its smallest common clade, and joins at the star's full width. In one 103-tip component
+this put a group's formation at 0.13. Neither root choice changes it; it is a property of the
+clade-diameter join and remains open.
+
 \paragraph{Correlated evidence.}
 Overlapping shards share sequences, alignments and the inference pipeline. Bootstrap resampling of
 shard trees treats them as independent and so understates uncertainty. Systematic errors common to
@@ -904,7 +972,7 @@ markers or on environmental amplicon data.
 \section{Availability}\label{sec:availability}
 
 \seqhesion{} is open source under the BSD 3-Clause licence. Source code: \url{https://github.com/joshuaowalker/seqhesion}; package \texttt{seqhesion} on PyPI
-(version 0.1.0). This paper is a companion to the repository and is revised there.
+(version 0.2.0). This paper is a companion to the repository and is revised there.
 It requires Python $\ge$ 3.10, NumPy, SciPy and ETE~3, pyitsx \citep{walker2026pyitsx}, an HMM-based ITS extractor, and the external tools vsearch, MAFFT,
 trimAl and FastTree.
 

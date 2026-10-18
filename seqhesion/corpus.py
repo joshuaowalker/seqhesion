@@ -71,7 +71,7 @@ METHOD = ('corpus layer: super-units = each component\'s groups (and lone tips) 
           'representative identity (2 covers, depth 6, 150 units per shard, one random member each, the seed\'s next 20 '
           'units as rooting context); unit-pair median join level, average linkage over observed unit pairs; '
           'verification rounds: every merge <= 0.75 on < 3 votes gets its cross unit pairs into 8 more shards, with random '
-          'units as non-voting context (until nothing is thin, at most 6 rounds); unit pairs on < 3 votes count as '
+          'units as non-voting context (repeated until nothing is thin); unit pairs on < 3 votes count as '
           'unobserved; v2 (2026-10-16)')
 
 

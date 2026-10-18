@@ -42,16 +42,21 @@ relationships.
    tip's id is a hash of its extracted sequence). ITS2-only, chimeric and other sequences are
    counted by class and not built.
 3. **Regions.** Connected components of the graph of 90% centroids, linked at 86% identity. A
-   component of 150 or more tips is built on its own. A smaller one draws its rooting context from
-   its nearest sequences anywhere in the corpus; that context is pruned before grouping. A lone
-   tip gets no tree.
+   component of 150 or more tips is built on its own. A smaller one draws context from its
+   nearest sequences anywhere in the corpus, so its trees are not built from a handful of
+   sequences alone; that context is pruned before grouping. A lone tip gets no tree.
 4. **Covers.** Two independent covers of each component by *shards*: a seed and its 149 nearest
    neighbours, topped up so every shard holds at least 30 sequences below 97% identity to its
-   seed (150–180 sequences), plus a shared scaffold of up to 30 sequences for rooting. Every
-   sequence is in at least three shards of each cover.
+   seed (150–180 sequences), plus a shared scaffold of up to 30 of the component's most abundant
+   centroids. Every sequence is in at least three shards of each cover.
 5. **Shard trees.** MAFFT L-INS-i, trimAl `-gappyout`, FastTree `-gtr -gamma`; cached under a
-   key of exactly what made them. Each tree is rooted on the scaffold, the scaffold pruned, and
-   branches shorter than half an expected change collapsed.
+   key of exactly what made them. Scaffold and context are pruned, the members' own tree is
+   rooted at its midpoint, and branches shorter than half an expected change are collapsed.
+   (Rooting on a scaffold tip put the root inside dense clusters of near-identical sequences when
+   a large component's scaffold was one or two of its own centroids; a distant outgroup did the
+   same. Midpoint rooting fixed both.) The coarse-layer and corpus shards below hold one member
+   per unit, so no dense cluster can capture the root; they keep their root on outgroup or
+   context sequences, pruned in the same way.
 6. **Co-association.** For each pair of sequences, every shard holding both records the level at
    which it joins them: the diameter of the smallest clade holding both. The median over shards
    is the pair's join level. Average linkage over observed pairs only gives the hierarchy. Pairs
@@ -79,9 +84,15 @@ relationships.
    cover over them, chosen by representative identity, relates components across the corpus. The
    result is one tree over every tip; corpus groups may span many components. A merge resting on
    one or two trees is *verified*: its unit pairs go into more shards with random context, which
-   confirm or dissent; a pair still on fewer than 3 votes counts as unobserved. Every coarse and
-   corpus group reports the votes behind its own merge and its weakest merge.
-10. **Releases and antenomina.** A release is a set of TSV tables and a JSON manifest. Each group
+   confirm or dissent; rounds repeat until no merge rests on fewer than 3 votes, and a pair still
+   on fewer than 3 counts as unobserved. Every coarse and corpus group reports the votes behind
+   its own merge and its weakest merge.
+10. **ITS2-only placement.** Sequences with only an ITS2 never shape the hierarchy; they are
+    placed on it afterwards. A query's closest tip by ITS2 identity picks the shards (identity
+    only samples); the query's ITS2 is added to those shards' alignments as a fragment, each tree
+    is re-inferred, and the query joins the finest group whose average join level to it is within
+    that level.
+11. **Releases and antenomina.** A release is a set of TSV tables and a JSON manifest. Each group
     has an *antenomen*: a stable id carried from release to release when a group and its
     predecessor are each other's best match and share more than half of the inputs both releases
     hold. `lineage.tsv` logs every match, and an id is never reused.
@@ -127,16 +138,21 @@ From a FASTA to a release (every command takes `--procs N`):
     seqhesion corpus-plan   INTAKE CORPUS $(cat REGIONS/large.txt REGIONS/small.txt)
     seqhesion corpus-trees  CORPUS
     seqhesion corpus-layer  CORPUS
-    # verification rounds, until corpus-verify exits with status 3 (nothing thin), at most 3
-    seqhesion corpus-verify CORPUS --round 1 && seqhesion corpus-trees CORPUS --round 1 && seqhesion corpus-layer CORPUS
+    # verification rounds R = 1, 2, ... until corpus-verify exits with status 3 (nothing thin)
+    seqhesion corpus-verify CORPUS --round R && seqhesion corpus-trees CORPUS --round R && seqhesion corpus-layer CORPUS
 
-    seqhesion release OUT --input INPUT --intake INTAKE --layer --corpus CORPUS \
+    # ITS2-only placement (place-shards --chunk I --of N splits it over machines)
+    seqhesion place-plan   INTAKE PLACE $(cat REGIONS/large.txt REGIONS/small.txt)
+    seqhesion place-shards PLACE REGIONS
+
+    seqhesion release OUT --input INPUT --intake INTAKE --layer --corpus CORPUS --placements PLACE \
         $(for r in $(cat REGIONS/large.txt REGIONS/small.txt); do echo $r=$r/hierarchy.json; done) \
         [--previous PREVIOUS_RELEASE]
 
 `build` is `cover`, `prepare` and `hierarchy` in one; they can also be run one at a time. Without
 `--corpus`, the coarse layer runs to 0.5 within each component; without `--layer`, a release
-stops at 0.1. `--previous` carries group ids forward from an earlier release.
+stops at 0.1. Without `--placements`, the release places ITS2-only inputs itself, on one machine
+(`--no-place-its2` skips them). `--previous` carries group ids forward from an earlier release.
 
 Almost all of the compute is shard trees, one MAFFT L-INS-i alignment and one FastTree per shard.
 Trees are cached, so a rebuild after the corpus grows rebuilds only the shards that changed.
@@ -153,6 +169,7 @@ A release directory holds:
 | `groups.tsv` | one row per distinct group or stem node: size, level range, parent, cohesion, pull, margin, stem, spread, nearest group, shard verdicts, and its node in the dendrogram |
 | `group_levels.tsv`, `group_members.tsv` | a group's evidence at each level; its tips |
 | `membership.tsv` | per tip and level: its group, how firmly it belongs, its strongest outside pull |
+| `placements.tsv` | every ITS2-only input: placed (its group and level, the join, the shards behind it) or why not |
 | `lineage.tsv`, `minted.tsv` | how each group id relates to the previous release; every id ever minted |
 | `dendrogram/` | the linkage the levels are cut from, as Newick (`corpus.nwk`: one tree of every tip) |
 | `shards/` | the prepared shard trees, for drawing and on-demand distances |
@@ -161,15 +178,12 @@ The columns are documented in `seqhesion/export.py` and listed in every manifest
 
 ## Status
 
-Version 0.1. seqhesion is in production on a corpus of fungal ITS sequences drawn mainly from
+Version 0.2. seqhesion is in production on a corpus of fungal ITS sequences drawn mainly from
 MycoMap, with other sources: about 226,000 input sequences, 147,000 distinct full-ITS tips in
-4,172 components. The method was developed and validated in a separate research prototype
+4,174 components, and about 18,600 ITS2-only sequences placed on them. The method was developed and validated in a separate research prototype
 (simulation, reproducibility between independent covers, resampling of shards). The draft white
 paper in [`docs/whitepaper`](https://github.com/joshuaowalker/seqhesion/tree/main/docs/whitepaper) describes the method, its validation and its
 limits, and is revised alongside the code.
-
-Not yet in the release: placement of ITS2-only sequences on the hierarchy. The code is in
-`seqhesion/place.py`, but running it at corpus scale awaits a batch interface.
 
 ## License
 

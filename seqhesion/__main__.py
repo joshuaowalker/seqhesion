@@ -16,8 +16,11 @@
   seqhesion corpus-trees CORPUS_DIR [--chunk I --of N]
   seqhesion corpus-layer CORPUS_DIR
   seqhesion corpus-verify CORPUS_DIR --round R     then corpus-trees --round R, corpus-layer; repeat
+  seqhesion place-plan   INTAKE_DIR PLACE_DIR REGION_DIR ...   ITS2-only placement: the shard jobs
+  seqhesion place-shards PLACE_DIR REGIONS_ROOT [--chunk I --of N]   run them (e.g. an AWS array)
   seqhesion release      OUT_DIR|auto [--releases DIR] --input INPUT_DIR --intake INTAKE_DIR
-                         [--layer [--corpus CORPUS_DIR]] [--previous RELEASE] REGION_DIR=HIERARCHY.json ...
+                         [--layer [--corpus CORPUS_DIR]] [--placements PLACE_DIR] [--previous RELEASE]
+                         REGION_DIR=HIERARCHY.json ...
 """
 import argparse
 import json
