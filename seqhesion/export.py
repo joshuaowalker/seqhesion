@@ -686,7 +686,7 @@ def write_release(out, input_dir, intake_dir, components, all_components, thread
                   'identity': 'vsearch --allpairs_global --iddef 2, fraction'},
         'tree_data': {'dendrogram': 'average linkage over observed pairs of the per-pair median join level (identical join; '
                                     'clade-diameter scale, not branch length); draw ultrametric; structure below ~0.005 is weak',
-                      'shards': 'prepared shard trees (rooted on the scaffold, scaffold pruned, branches under half an expected '
+                      'shards': 'prepared shard trees (scaffold and context pruned; local shards rooted at the midpoint of their members, sparse and corpus shards on their outside outgroups; branches under half an expected '
                                 'change collapsed); the hierarchy pools both covers, a cover-1 shard with twin_of set counted once; patristic = FastTree GTR+gamma path length on '
                                 'trimmed columns; one tree is one sample, the hierarchy uses medians over shards',
                       'stability': 'drawings change with every full rebuild (a new cover); antenomina carry across'},

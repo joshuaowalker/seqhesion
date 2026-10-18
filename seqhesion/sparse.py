@@ -135,7 +135,7 @@ def build(region_dir, procs=8, log=print, reuse=()):
     seqs = read_fasta(rd / 'comp.fasta')
     seqs.update(read_fasta(sd / 'outgroup.fasta'))
     cover.build_trees(man, seqs, sd / 'trees', procs, log=log, reuse=reuse)
-    shardtrees.export(sd, 0, procs, log=log)
+    shardtrees.export(sd, 0, procs, log=log, rooting='scaffold')
     u = json.load(open(sd / 'units.json'))
     _, lines, widths = shardtrees.read(sd, 0)
     layer = build_layer(lines, widths, u['tips'], np.array(u['unit_of_tip']), log=log, procs=procs)

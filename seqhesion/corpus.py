@@ -198,7 +198,7 @@ def layer(out, procs=8, log=print):
     missing = [n for n in man['shards'] if not (out / 'trees' / f'{n}.nwk.key.json').exists()]
     if missing:
         raise SystemExit(f'{len(missing)} planned trees missing (e.g. {missing[:3]}): build every chunk first')
-    shardtrees.export(out, 0, procs, log=log)
+    shardtrees.export(out, 0, procs, log=log, rooting='scaffold')
     u = json.load(open(out / 'units.json'))
     _, lines, widths = shardtrees.read(out, 0)
     lay = sparse.build_layer(lines, widths, u['tips'], np.array(u['unit_of_tip']), procs=procs, log=log, levels=LEVELS,
@@ -248,7 +248,7 @@ def verify(out, round_, procs=8, log=print, below=VERIFY_BELOW, repeat=VERIFY_RE
     missing = [n for n in man['shards'] if not (out / 'trees' / f'{n}.nwk.key.json').exists()]
     if missing:
         raise SystemExit(f'{len(missing)} planned trees missing (e.g. {missing[:3]}): build them first')
-    shardtrees.export(out, 0, procs, log=log)
+    shardtrees.export(out, 0, procs, log=log, rooting='scaffold')
     thin, ukeys, U = thin_merges(out, procs, below)
     seed = man.get('corpus', {}).get('seed', 0)
     rng = random.Random(f'corpus:{seed}:verify:{round_}')

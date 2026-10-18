@@ -68,7 +68,7 @@ METHOD = ('co-association hierarchy: per pair, median over shards holding both o
           'over shard votes; per node: shard evidence, spread and nearest relatives from median '
           'patristic distances, nearest relative = nearest outside group; stand-alone (no stitch); shards pooled over '
           'both covers, cross-cover twins once; per group: cohesion, pull (members\' outside pulls pooled over votes), '
-          'margin = cohesion - pull (no replication); v7 (2026-10-04)')
+          'margin = cohesion - pull (no replication); shard trees rooted at the midpoint of their members (shardtrees.ROOTING); v8 (2026-10-17)')
 
 LEVELS = (0.005, 0.01, 0.015, 0.02, 0.03, 0.05, 0.075, 0.1)
 STEM_MIN = 0.001                 # a stem node's linkage stem is at least this
